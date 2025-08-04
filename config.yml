@@ -37,10 +37,10 @@ crawler:
   # airav avsox avwiki fanza fc2 fc2fan javbus javdb javlib javmenu jav321 mgstage prestige arzon arzon_iv
   selection:
     normal: [javbus2]
-    fc2: [fc2, avsox, javdb, javmenu, fc2ppvdb]
-    cid: []
-    getchu: [dl_getchu]
-    gyutto: [gyutto]
+    fc2: [javbus2]
+    cid: [javbus2]
+    getchu: [javbus2]
+    gyutto: [javbus2]
   # 爬虫至少要获取到哪些字段才可以视为抓取成功？
   required_keys: [cover, title]
   # 努力爬取更准确更丰富的信息（会略微增加部分站点的爬取耗时）

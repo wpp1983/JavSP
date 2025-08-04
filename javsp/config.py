@@ -19,26 +19,7 @@ class Scanner(BaseConfig):
     manual: bool
 
 class CrawlerID(str, Enum):
-    airav = 'airav'
-    avsox = 'avsox'
-    avwiki = 'avwiki'
-    dl_getchu = 'dl_getchu'
-    fanza = 'fanza'
-    fc2 = 'fc2'
-    fc2fan = 'fc2fan'
-    fc2ppvdb = 'fc2ppvdb'
-    gyutto = 'gyutto'
-    jav321 = 'jav321'
-    javbus = 'javbus'
     javbus2 = 'javbus2'
-    javdb = 'javdb'
-    javlib = 'javlib'
-    javmenu = 'javmenu'
-    mgstage = 'mgstage'
-    njav = 'njav'
-    prestige = 'prestige'
-    arzon = 'arzon'
-    arzon_iv = 'arzon_iv'
 
 class Network(BaseConfig):
     proxy_server: Url | None
