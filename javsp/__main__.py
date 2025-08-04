@@ -34,6 +34,24 @@ for handler in root_logger.handlers:
 
 logger = logging.getLogger('main')
 
+def setup_logging(log_level='INFO'):
+    """设置日志级别"""
+    numeric_level = getattr(logging, log_level.upper(), logging.INFO)
+    
+    # 设置根日志器级别
+    root_logger.setLevel(numeric_level)
+    
+    # 如果没有处理器，添加一个StreamHandler
+    if not root_logger.handlers:
+        handler = logging.StreamHandler(TqdmOut)
+        formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+        handler.setFormatter(formatter)
+        root_logger.addHandler(handler)
+    
+    # 设置所有处理器的级别
+    for handler in root_logger.handlers:
+        handler.setLevel(numeric_level)
+
 
 from javsp.lib import resource_path
 from javsp.nfo import write_nfo
@@ -43,7 +61,6 @@ from javsp.image import *
 from javsp.datatype import Movie, MovieInfo
 from javsp.web.base import download
 from javsp.web.exceptions import *
-from javsp.web.translate import translate_movie_info
 
 from javsp.config import Cfg, CrawlerID
 from javsp.prompt import prompt
@@ -432,8 +449,6 @@ def RunNormalMode(all_movies):
 
     outer_bar = tqdm(all_movies, desc='整理影片', ascii=True, leave=False)
     total_step = 6
-    if Cfg().translator.engine:
-        total_step += 1
     if Cfg().summarizer.extra_fanarts.enabled:
         total_step += 1
 
@@ -453,11 +468,6 @@ def RunNormalMode(all_movies):
             inner_bar.set_description('汇总数据')
             has_required_keys = info_summary(movie, all_info)
             check_step(has_required_keys)
-
-            if Cfg().translator.engine:
-                inner_bar.set_description('翻译影片信息')
-                success = translate_movie_info(movie.info)
-                check_step(success)
 
             generate_names(movie)
             check_step(movie.save_dir, '无法按命名规则生成目标文件夹')
@@ -523,9 +533,9 @@ def RunNormalMode(all_movies):
             if movie != all_movies[-1] and Cfg().crawler.sleep_after_scraping > Duration(0):
                 time.sleep(Cfg().crawler.sleep_after_scraping.total_seconds())
             return_movies.append(movie)
-        # except Exception as e:
-        #     logger.debug(e, exc_info=True)
-        #     logger.error(f'整理失败: {e}')
+        except Exception as e:
+            logger.debug(e, exc_info=True)
+            logger.error(f'整理失败: {e}')
         finally:
             inner_bar.close()
     return return_movies
@@ -586,10 +596,13 @@ def error_exit(success, err_info):
 
 def entry():
     try:
-        Cfg()
+        cfg = Cfg()
     except ValidationError as e:
         print(e.errors())
         exit(1)
+    
+    # 设置日志级别
+    setup_logging(cfg.other.log_level)
 
     global actressAliasMap
     if Cfg().crawler.normalize_actress_name:

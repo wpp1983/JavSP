@@ -19,10 +19,8 @@ request.headers['Accept-Language'] = 'zh-CN,zh;q=0.9,zh-TW;q=0.8,en-US;q=0.7,en;
 logger = logging.getLogger(__name__)
 genre_map = GenreMap('data/genre_javdb.csv')
 permanent_url = 'https://javdb.com'
-if Cfg().network.proxy_server is not None:
-    base_url = permanent_url
-else:
-    base_url = str(Cfg().network.proxy_free[CrawlerID.javdb])
+# 直接使用永久URL，不再使用proxy_free功能
+base_url = permanent_url
 
 
 def get_html_wrapper(url):

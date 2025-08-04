@@ -99,18 +99,34 @@ def parse_data(movie: MovieInfo):
 
 def parse_videoa_page(movie: MovieInfo, html):
     """解析AV影片的页面布局"""
-    title = html.xpath("//div[@class='hreview']/h1/text()")[0]
+    title_elements = html.xpath("//div[@class='hreview']/h1/text()")
+    if not title_elements:
+        # 如果找不到标题，可能是页面结构发生变化
+        raise ValueError("无法找到影片标题，页面结构可能已变化")
+    title = title_elements[0]
+    
     # 注意: 浏览器在渲染时会自动加上了'tbody'字段，但是原始html网页中并没有，因此xpath解析时还是要按原始网页的来
-    container = html.xpath("//table[@class='mg-b12']/tr/td")[0]
-    cover = container.xpath("//div[@id='sample-video']/a/@href")[0]
+    container_elements = html.xpath("//table[@class='mg-b12']/tr/td")
+    if not container_elements:
+        raise ValueError("无法找到主要内容容器，页面结构可能已变化")
+    container = container_elements[0]
+    
+    cover_elements = container.xpath("//div[@id='sample-video']/a/@href")
+    if not cover_elements:
+        # 封面是重要信息，如果找不到应该记录但不中断解析
+        movie.cover = ''
+    else:
+        movie.cover = cover_elements[0]
     # 采用'配信開始日'作为发布日期: https://www.zhihu.com/question/57513172/answer/153219083
     date_tag = container.xpath("//td[text()='配信開始日：']/following-sibling::td/text()")
     if date_tag:
         movie.publish_date = date_tag[0].strip().replace('/', '-')
-    duration_str = container.xpath("//td[text()='収録時間：']/following-sibling::td/text()")[0].strip()
-    match = re.search(r'\d+', duration_str)
-    if match:
-        movie.duration = match.group(0)
+    duration_elements = container.xpath("//td[text()='収録時間：']/following-sibling::td/text()")
+    if duration_elements:
+        duration_str = duration_elements[0].strip()
+        match = re.search(r'\d+', duration_str)
+        if match:
+            movie.duration = match.group(0)
     # 女优、导演、系列：字段不存在时，匹配将得到空列表。暂未发现有名字不显示在a标签中的情况
     actress = container.xpath("//span[@id='performer']/a/text()")
     director_tag = container.xpath("//td[text()='監督：']/following-sibling::td/a/text()")
@@ -132,8 +148,17 @@ def parse_videoa_page(movie: MovieInfo, html):
     for tag in genre_tags:
         genre.append(tag.text.strip())
         genre_id.append(tag.get('href').split('=')[-1].strip('/'))
-    cid = container.xpath("//td[text()='品番：']/following-sibling::td/text()")[0].strip()
-    plot = container.xpath("//div[contains(@class, 'mg-b20 lh4')]/text()")[0].strip()
+    cid_elements = container.xpath("//td[text()='品番：']/following-sibling::td/text()")
+    if cid_elements:
+        cid = cid_elements[0].strip()
+    else:
+        # CID 是重要信息，但可能已经在其他地方设置了
+        pass
+    
+    plot_elements = container.xpath("//div[contains(@class, 'mg-b20 lh4')]/text()")
+    if plot_elements:
+        plot = plot_elements[0].strip()
+        movie.plot = plot
     preview_pics = container.xpath("//a[@name='sample-image']/img/@src")
     score_tag = container.xpath("//p[@class='d-review__average']/strong/text()")
     if score_tag:
@@ -142,15 +167,21 @@ def parse_videoa_page(movie: MovieInfo, html):
             score = float(match.group()) * 2
             movie.score = f'{score:.2f}'
     else:
-        score_img = container.xpath("//td[text()='平均評価：']/following-sibling::td/img/@src")[0]
-        movie.score = int(score_img.split('/')[-1].split('.')[0]) # 00, 05 ... 50
+        score_img_elements = container.xpath("//td[text()='平均評価：']/following-sibling::td/img/@src")
+        if score_img_elements:
+            score_img = score_img_elements[0]
+            movie.score = int(score_img.split('/')[-1].split('.')[0]) # 00, 05 ... 50
     
     if Cfg().crawler.hardworking:
         # 预览视频是动态加载的，不在静态网页中
         video_url = f'{base_url}/service/digitalapi/-/html5_player/=/cid={movie.cid}'
         html2 = request.get_html(video_url)
         # 目前用到js脚本的地方不多，所以不使用专门的js求值模块，先用正则提取文本然后用json解析数据
-        script = html2.xpath("//script[contains(text(),'getElementById(\"dmmplayer\")')]/text()")[0].strip()
+        script_elements = html2.xpath("//script[contains(text(),'getElementById(\"dmmplayer\")')]/text()")
+        if not script_elements:
+            # 如果找不到脚本，跳过预览视频处理
+            return
+        script = script_elements[0].strip()
         match = re.search(r'\{.*\}', script)
         # 主要是为了捕捉json.loads的异常，但是也借助try-except判断是否正则表达式是否匹配
         try:
@@ -175,11 +206,28 @@ def parse_videoa_page(movie: MovieInfo, html):
 
 def parse_anime_page(movie: MovieInfo, html):
     """解析动画影片的页面布局"""
-    title = html.xpath("//h1[@id='title']/text()")[0]
-    container = html.xpath("//table[@class='mg-b12']/tr/td")[0]
-    cover = container.xpath("//img[@name='package-image']/@src")[0]
-    date_str = container.xpath("//td[text()='発売日：']/following-sibling::td/text()")[0].strip()
-    publish_date = date_str.replace('/', '-')
+    title_elements = html.xpath("//h1[@id='title']/text()")
+    if not title_elements:
+        raise ValueError("无法找到动画影片标题，页面结构可能已变化")
+    title = title_elements[0]
+    
+    container_elements = html.xpath("//table[@class='mg-b12']/tr/td")
+    if not container_elements:
+        raise ValueError("无法找到主要内容容器，页面结构可能已变化")
+    container = container_elements[0]
+    
+    cover_elements = container.xpath("//img[@name='package-image']/@src")
+    if not cover_elements:
+        movie.cover = ''
+    else:
+        cover = cover_elements[0]
+        movie.cover = cover
+    
+    date_elements = container.xpath("//td[text()='発売日：']/following-sibling::td/text()")
+    if date_elements:
+        date_str = date_elements[0].strip()
+        publish_date = date_str.replace('/', '-')
+        movie.publish_date = publish_date
     duration_tag = container.xpath("//td[text()='収録時間：']/following-sibling::td/text()")
     if duration_tag:
         movie.duration = duration_tag[0].strip().replace('分', '')
@@ -194,20 +242,24 @@ def parse_anime_page(movie: MovieInfo, html):
     for tag in genre_tags:
         genre.append(tag.text.strip())
         genre_id.append(tag.get('href').split('=')[-1].strip('/'))
-    cid = container.xpath("//td[text()='品番：']/following-sibling::td/text()")[0].strip()
-    plot = container.xpath("//div[@class='mg-b20 lh4']/p")[0].text_content().strip()
+    cid_elements = container.xpath("//td[text()='品番：']/following-sibling::td/text()")
+    if cid_elements:
+        cid = cid_elements[0].strip()
+        movie.cid = cid
+    plot_elements = container.xpath("//div[@class='mg-b20 lh4']/p")
+    if plot_elements:
+        plot = plot_elements[0].text_content().strip()
+        movie.plot = plot
     preview_pics = container.xpath("//a[@name='sample-image']/img/@data-lazy")
-    score_img = container.xpath("//td[text()='平均評価：']/following-sibling::td/img/@src")[0]
-    score = int(score_img.split('/')[-1].split('.')[0]) # 00, 05 ... 50
+    score_img_elements = container.xpath("//td[text()='平均評価：']/following-sibling::td/img/@src")
+    if score_img_elements:
+        score_img = score_img_elements[0]
+        score = int(score_img.split('/')[-1].split('.')[0]) # 00, 05 ... 50
+        movie.score = f'{score/5:.2f}'  # 转换为10分制
 
-    movie.cid = cid
     movie.title = title
-    movie.cover = cover
-    movie.publish_date = publish_date
     movie.genre = genre
     movie.genre_id = genre_id
-    movie.plot = plot
-    movie.score = f'{score/5:.2f}'  # 转换为10分制
     movie.preview_pics = preview_pics
     movie.uncensored = False    # 服务器在日本且面向日本国内公开发售，不会包含无码片
 

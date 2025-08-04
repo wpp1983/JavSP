@@ -38,9 +38,15 @@ def scan_movies(root: str) -> List[Movie]:
                 dirnames.remove(name)
             # 移除有nfo的文件夹
             if Cfg().scanner.skip_nfo_dir:
-                if any(file.lower().endswith(".nfo") for file in os.listdir(os.path.join(dirpath, name)) if isinstance(file, str)):
-                    print(f"skip file {name}")
-                    dirnames.remove(name)
+                target_dir = os.path.join(dirpath, name)
+                if os.path.exists(target_dir):
+                    try:
+                        if any(file.lower().endswith(".nfo") for file in os.listdir(target_dir) if isinstance(file, str)):
+                            print(f"skip file {name}")
+                            dirnames.remove(name)
+                    except (OSError, PermissionError):
+                        # 如果无法访问目录，跳过检查
+                        pass
 
         for file in filenames:
             ext = os.path.splitext(file)[1].lower()

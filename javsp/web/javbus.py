@@ -12,10 +12,8 @@ from javsp.datatype import MovieInfo, GenreMap
 logger = logging.getLogger(__name__)
 genre_map = GenreMap('data/genre_javbus.csv')
 permanent_url = 'https://www.javbus.com'
-if Cfg().network.proxy_server is not None:
-    base_url = permanent_url
-else:
-    base_url = str(Cfg().network.proxy_free[CrawlerID.javbus])
+# 直接使用永久URL，不再使用proxy_free功能
+base_url = permanent_url
 
 
 def parse_data(movie: MovieInfo):

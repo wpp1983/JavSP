@@ -11,7 +11,7 @@ scanner:
     - 'Carib(beancom)?'
     - '[^a-z\d](f?hd|lt)[^a-z\d]'
   # 整理哪个文件夹下的影片？（此项留空时将在运行时询问）
-  input_directory: null
+  input_directory: /Volumes/媒体库/AV/AV_first
   # 哪些后缀的文件应当视为影片？
   filename_extensions: [.3gp, .avi, .f4v, .flv, .iso, .m2ts, .m4v, .mkv, .mov, .mp4, .mpeg, .rm, .rmvb, .ts, .vob, .webm, .wmv, .strm, .mpg]
   # 扫描影片文件时忽略指定的文件夹
@@ -19,19 +19,13 @@ scanner:
   # 匹配番号时忽略小于指定大小的文件
   # 格式要求：https://docs.pydantic.dev/2.0/usage/types/bytesize/
   minimum_size: 232MiB
-  skip_nfo_dir: yes
-  manual: yes
+  skip_nfo_dir: no
+  manual: no
 ################################
 network:
   # 设置代理服务器地址，支持 http, socks5/socks5h 代理，比如'http://127.0.0.1:1080'
   # null表示禁用代理
-  proxy_server: null
-  # 各个站点的免代理地址。地址失效时软件会自动尝试获取新地址，你也可以手动设置
-  proxy_free:
-    avsox: 'https://avsox.click'
-    javbus: 'https://www.seedmm.help'
-    javdb: 'https://javdb368.com'
-    javlib: 'https://www.y78k.com'
+  proxy_server: http://192.168.50.36:8234
   # 网络问题导致抓取数据失败时的重试次数，通常3次就差不多了
   retry: 3
   # https://en.wikipedia.org/wiki/ISO_8601#Durations
@@ -42,9 +36,9 @@ crawler:
   # 要使用的爬虫列表（汇总数据时从前到后进行）
   # airav avsox avwiki fanza fc2 fc2fan javbus javdb javlib javmenu jav321 mgstage prestige arzon arzon_iv
   selection:
-    normal: [airav, avsox, javbus, javdb, javlib, jav321, mgstage, prestige]
+    normal: [javbus2]
     fc2: [fc2, avsox, javdb, javmenu, fc2ppvdb]
-    cid: [fanza]
+    cid: []
     getchu: [dl_getchu]
     gyutto: [gyutto]
   # 爬虫至少要获取到哪些字段才可以视为抓取成功？
@@ -143,56 +137,17 @@ summarizer:
 
   extra_fanarts:
     # 是否下载剧照？
-    enabled: true
+    enabled: false
     # 间隔的两次封面爬取请求之间应该间隔多久
     scrap_interval: PT1.5S
 
-################################
-translator:
-  # 翻译引擎，可选: google, bing, baidu, claude(haiku), openai （Google可以直接免费使用。留空表示禁用翻译功能）
-  # 进阶功能的文档 https://github.com/Yuukiy/JavSP/wiki/Translation-%7C-%E7%BF%BB%E8%AF%91
-  engine: null
-  ## 使用百度翻译: {{{
-  # engine: 
-  #   name: baidu
-  #   # 百度翻译的APP ID和密钥
-  #   app_id: ''
-  #   api_key: ''
-  ## }}}
-  ## 使用必应翻译: {{{
-  # engine: 
-  #   name: bing
-  #   # 微软必应翻译（Azure 认知服务 → 翻译）的密钥
-  #   api_key: ''
-  ## }}}
-  ## 使用Claude翻译: {{{
-  # engine: 
-  #   name: claude
-  #   # Claude的密钥 (使用haiku模型)
-  #   api_key: ''
-  ## }}}
-  ## 使用OpenAI翻译: {{{
-  # engine: 
-  #   name: openai
-  #   # OpenAI API（默认使用 Groq，可替换成任何兼容 OpenAI 的第三方 API）
-  #   url: 'https://api.groq.com/openai/v1/chat/completions'
-  #   api_key: ''
-  #   # 要使用的模型（默认使用 Groq 的 llama-3.1-70b-versatile 模型，若使用 OpenAI 官方 API 的话一般模型为 gpt-3.5-turbo）
-  #   model: llama-3.1-70b-versatile
-  ## }}}
-  
-  # 是否翻译各个字段
-  fields: 
-    # 是否翻译标题
-    title: true
-    # 是否翻译剧情简介
-    plot: true
-  
 ################################
 other:
   # 是否在stdin/stdout进行交互
   interactive: true
   # 是否允许检查更新。如果允许，在有新版本时会显示提示信息和新版功能
-  check_update: true
+  check_update: false
   # 是否允许检查到新版本时自动下载
   auto_update: false
+  # 日志级别: DEBUG, INFO, WARNING, ERROR
+  log_level: WARNING

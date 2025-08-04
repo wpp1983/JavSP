@@ -30,6 +30,7 @@ class CrawlerID(str, Enum):
     gyutto = 'gyutto'
     jav321 = 'jav321'
     javbus = 'javbus'
+    javbus2 = 'javbus2'
     javdb = 'javdb'
     javlib = 'javlib'
     javmenu = 'javmenu'
@@ -43,7 +44,6 @@ class Network(BaseConfig):
     proxy_server: Url | None
     retry: NonNegativeInt = 3
     timeout: Duration
-    proxy_free: Dict[CrawlerID, Url]
 
 class CrawlerSelect(BaseConfig):
     def items(self) -> List[tuple[str, list[CrawlerID]]]:
@@ -172,52 +172,18 @@ class Summarizer(BaseConfig):
     fanart: FanartSummarize
     extra_fanarts: ExtraFanartSummarize
 
-class BaiduTranslateEngine(BaseConfig):
-    name: Literal['baidu']
-    app_id: str
-    api_key: str
-
-class BingTranslateEngine(BaseConfig):
-    name: Literal['bing']
-    api_key: str
-
-class ClaudeTranslateEngine(BaseConfig):
-    name: Literal['claude']
-    api_key: str
-
-class OpenAITranslateEngine(BaseConfig):
-    name: Literal['openai']
-    url: Url
-    api_key: str
-    model: str
-
-class GoogleTranslateEngine(BaseConfig):
-    name: Literal['google']
-
-TranslateEngine: TypeAlias = Union[
-        BaiduTranslateEngine,
-        BingTranslateEngine,
-        ClaudeTranslateEngine,
-        OpenAITranslateEngine,
-        GoogleTranslateEngine,
-        None]
-
-class TranslateField(BaseConfig):
-    title: bool
-    plot: bool
-
-class Translator(BaseConfig):
-    engine: TranslateEngine = Field(..., discriminator='name')
-    fields: TranslateField
 
 class Other(BaseConfig):
     interactive: bool
     check_update: bool
     auto_update: bool
+    log_level: Literal['DEBUG', 'INFO', 'WARNING', 'ERROR'] = 'INFO'
 
 def get_config_source():
     parser = ArgumentParser(prog='JavSP', description='汇总多站点数据的AV元数据刮削器', formatter_class=RawTextHelpFormatter)
     parser.add_argument('-c', '--config', help='使用指定的配置文件')
+    parser.add_argument('-v', '--verbose', action='store_const', const='DEBUG', dest='o__other__log_level', help='启用详细日志输出 (DEBUG级别)')
+    parser.add_argument('--log-level', choices=['DEBUG', 'INFO', 'WARNING', 'ERROR'], dest='o__other__log_level', help='设置日志级别')
     args, _ = parser.parse_known_args()
     sources = []
     if args.config is None:
@@ -232,6 +198,5 @@ class Cfg(BaseConfig):
     network: Network
     crawler: Crawler
     summarizer: Summarizer
-    translator: Translator
     other: Other
     CONFIG_SOURCES=get_config_source()
