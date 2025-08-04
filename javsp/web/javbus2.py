@@ -21,6 +21,16 @@ from javsp.datatype import MovieInfo, GenreMap
 disable_warnings(InsecureRequestWarning)
 
 logger = logging.getLogger(__name__)
+
+# 配置失败日志记录器
+failed_logger = logging.getLogger('javbus2_failed')
+failed_handler = logging.FileHandler('failed.log', encoding='utf-8')
+failed_formatter = logging.Formatter('%(asctime)s - %(message)s')
+failed_handler.setFormatter(failed_formatter)
+failed_logger.addHandler(failed_handler)
+failed_logger.setLevel(logging.INFO)
+failed_logger.propagate = False  # 防止日志传播到父记录器
+
 genre_map = GenreMap('data/genre_javbus.csv')
 permanent_url = 'https://www.javbus.com'
 
@@ -188,38 +198,28 @@ def normalize_dvdid(dvdid):
     return dvdid
 
 def try_multiple_dvdid_formats(original_dvdid):
-    """尝试多种番号格式
-    返回可能的番号格式列表，优先级从高到低
+    """标准化番号格式为 XXX-三位数字格式
+    返回标准化的番号字符串
     """
-    formats = []
+    if not original_dvdid:
+        return original_dvdid
     
-    # 1. 标准化后的格式（去除前导零）
-    normalized = normalize_dvdid(original_dvdid)
-    formats.append(normalized)
-    
-    # 2. 原始格式（如果与标准化格式不同）
-    if original_dvdid != normalized:
-        formats.append(original_dvdid)
-    
-    # 3. 尝试添加前导零的格式（针对某些特殊情况）
-    match = re.match(r'^([A-Za-z]+)-(\d+)$', normalized.strip())
+    # 使用正则表达式匹配番号格式: 字母-数字
+    match = re.match(r'^([A-Za-z]+)-(\d+)$', original_dvdid.strip())
     if match:
         prefix = match.group(1)
         number = match.group(2)
+        # 去除前导零，然后补齐到3位数字
+        normalized_number = str(int(number)).zfill(3)
+        standardized_dvdid = f"{prefix}-{normalized_number}"
         
-        # 尝试3位数字格式
-        if len(number) < 3:
-            padded_3 = f"{prefix}-{number.zfill(3)}"
-            if padded_3 not in formats:
-                formats.append(padded_3)
+        if standardized_dvdid != original_dvdid:
+            logger.debug(f'javbus2: 番号标准化: {original_dvdid} -> {standardized_dvdid}')
         
-        # 尝试5位数字格式
-        if len(number) < 5:
-            padded_5 = f"{prefix}-{number.zfill(5)}"
-            if padded_5 not in formats:
-                formats.append(padded_5)
+        return standardized_dvdid
     
-    return formats
+    # 如果不匹配标准格式，返回原番号
+    return original_dvdid
 
 
 # 全局会话实例
@@ -232,52 +232,42 @@ def parse_data(movie: MovieInfo):
         movie (MovieInfo): 要解析的影片信息，解析后的信息直接更新到此变量内
     """
     original_dvdid = movie.dvdid
-    dvdid_formats = try_multiple_dvdid_formats(original_dvdid)
+    standardized_dvdid = try_multiple_dvdid_formats(original_dvdid)
     
-    logger.debug(f'javbus2: 开始抓取: {original_dvdid}，尝试格式: {dvdid_formats}')
+    logger.debug(f'javbus2: 开始抓取: {original_dvdid}，标准化格式: {standardized_dvdid}')
     
-    # 尝试不同的番号格式
-    last_exception = None
-    for dvdid_to_try in dvdid_formats:
-        url = f'{base_url}/{dvdid_to_try}'
-        logger.debug(f'javbus2: 尝试抓取: {url}')
+    # 使用标准化后的番号格式
+    url = f'{base_url}/{standardized_dvdid}'
+    logger.debug(f'javbus2: 抓取URL: {url}')
+    
+    try:
+        resp = enhanced_session.get_with_retry(url)
         
-        try:
-            resp = enhanced_session.get_with_retry(url)
-            
-            # 处理可能的重定向到登录页面
-            if resp.history and any('/doc/driver-verify' in r.url for r in resp.history):
-                logger.debug('javbus2: 检测到driver验证页面，使用重定向前的响应')
-                # 使用第一个重定向前的响应
-                resp = resp.history[0]
-            
-            html = resp2html(resp)
-            
-            # 检查是否为404页面
-            page_title = html.xpath('/html/head/title/text()')
-            if page_title and page_title[0].startswith('404 Page Not Found!'):
-                logger.debug(f'javbus2: 番号格式 {dvdid_to_try} 返回404，尝试下一个格式')
-                continue  # 尝试下一个格式
-            
-            # 如果成功找到页面，跳出循环并继续处理
-            logger.debug(f'javbus2: 成功找到影片页面，使用番号格式: {dvdid_to_try}')
-            actual_dvdid = dvdid_to_try
-            break
-            
-        except MovieNotFoundError as e:
-            logger.debug(f'javbus2: 番号格式 {dvdid_to_try} 未找到，尝试下一个格式')
-            last_exception = e
-            continue
-        except Exception as e:
-            logger.debug(f'javbus2: 番号格式 {dvdid_to_try} 出现异常: {e}')
-            last_exception = e
-            continue
-    else:
-        # 所有格式都尝试失败
-        if last_exception:
-            raise last_exception
-        else:
-            raise MovieNotFoundError(__name__, original_dvdid)
+        # 处理可能的重定向到登录页面
+        if resp.history and any('/doc/driver-verify' in r.url for r in resp.history):
+            logger.debug('javbus2: 检测到driver验证页面，使用重定向前的响应')
+            # 使用第一个重定向前的响应
+            resp = resp.history[0]
+        
+        html = resp2html(resp)
+        
+        # 检查是否为404页面
+        page_title = html.xpath('/html/head/title/text()')
+        if page_title and page_title[0].startswith('404 Page Not Found!'):
+            logger.debug(f'javbus2: 番号 {standardized_dvdid} 返回404')
+            raise MovieNotFoundError(__name__, standardized_dvdid)
+        
+        # 如果成功找到页面，继续处理
+        logger.debug(f'javbus2: 成功找到影片页面，使用番号格式: {standardized_dvdid}')
+        actual_dvdid = standardized_dvdid
+        
+    except MovieNotFoundError as e:
+        failed_logger.info(f'影片未找到: {original_dvdid} (标准化: {standardized_dvdid}) - {str(e)}')
+        raise
+    except Exception as e:
+        failed_logger.info(f'抓取失败: {original_dvdid} (标准化: {standardized_dvdid}) - {str(e)}')
+        logger.debug(f'javbus2: 番号 {standardized_dvdid} 出现异常: {e}')
+        raise
     
     # 如果成功找到页面，继续处理数据提取
     try:
@@ -415,6 +405,7 @@ def parse_data(movie: MovieInfo):
     except (MovieNotFoundError, SiteBlocked):
         raise
     except Exception as e:
+        failed_logger.info(f'数据解析失败: {original_dvdid} (标准化: {actual_dvdid}) - {str(e)}')
         logger.error(f'javbus2: 抓取数据时发生异常: {e}', exc_info=True)
         raise WebsiteError(f'javbus2: 抓取数据失败: {e}')
 
@@ -428,6 +419,7 @@ def parse_clean_data(movie: MovieInfo):
             movie.genre_id = None  # 清空genre id，表明已完成转换
         logger.info(f'javbus2: 数据抓取和清洗完成: {movie.dvdid}')
     except Exception as e:
+        failed_logger.info(f'数据清洗失败: {movie.dvdid} - {str(e)}')
         logger.error(f'javbus2: 数据清洗失败: {e}')
         raise
 
