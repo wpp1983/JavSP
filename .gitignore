@@ -134,3 +134,18 @@ ver_hook.py
 
 .idea
 .vscode
+
+# JavSP specific files
+failed.log
+*.jpg
+*.png
+*.jpeg
+*.gif
+*.webp
+poster.*
+fanart.*
+movie.nfo
+test_*
+#整理完成/
+#不要扫描/
+#recycle/

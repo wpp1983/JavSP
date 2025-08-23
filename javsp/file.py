@@ -22,6 +22,58 @@ logger = logging.getLogger(__name__)
 failed_items = []
 
 
+def select_best_quality_file(files):
+    """从多个文件中选择最佳质量的文件
+    Args:
+        files: 文件路径列表
+    Returns:
+        最佳质量文件的路径，如果无法确定则返回None
+    """
+    if not files:
+        return None
+    if len(files) == 1:
+        return files[0]
+    
+    # 定义质量优先级（数字越大优先级越高）
+    quality_keywords = {
+        'FHD': 100, '4K': 95, 'UHD': 95,
+        'HD': 50, '1080': 90, '720': 70,
+        'RM': -10,  # RM版本通常质量较低
+        'trailer': -50,  # 预告片
+    }
+    
+    def get_quality_score(filepath):
+        """计算文件质量分数"""
+        filename = os.path.basename(filepath).upper()
+        score = 0
+        
+        # 根据关键词计算分数
+        for keyword, points in quality_keywords.items():
+            if keyword in filename:
+                score += points
+        
+        # 文件大小作为次要考虑因素
+        try:
+            file_size = os.path.getsize(filepath)
+            # 文件越大，质量可能越好（以GB为单位）
+            size_score = min(file_size / (1024**3) * 5, 20)  # 最多20分
+            score += size_score
+        except OSError:
+            pass
+        
+        return score
+    
+    # 计算每个文件的质量分数
+    scored_files = [(f, get_quality_score(f)) for f in files]
+    scored_files.sort(key=lambda x: x[1], reverse=True)
+    
+    # 如果最高分和最低分差距太小，则认为无法确定最佳版本
+    if len(scored_files) > 1 and abs(scored_files[0][1] - scored_files[-1][1]) < 10:
+        return None
+        
+    return scored_files[0][0]
+
+
 def scan_movies(root: str) -> List[Movie]:
     """获取文件夹内的所有影片的列表（自动探测同一文件夹内的分片）"""
     # 由于实现的限制: 
@@ -67,10 +119,15 @@ def scan_movies(root: str) -> List[Movie]:
                     else:
                         dic[avid] = [fullpath]
                 else:
-                    fail = Movie('无法识别番号')
+                    # 检查是否为中文/日文文件名
+                    if re.match(r'^[\u4e00-\u9fff\u3040-\u309f\u30a0-\u30ff\s\u3000！-～]+', os.path.basename(fullpath)):
+                        logger.warning(f"文件名为纯中文/日文，无法自动识别番号，建议重命名: '{fullpath}'")
+                        fail = Movie('中文文件名-需重命名')
+                    else:
+                        fail = Movie('无法识别番号')
+                        logger.error(f"无法提取影片番号: '{fullpath}'")
                     fail.files = [fullpath]
                     failed_items.append(fail)
-                    logger.error(f"无法提取影片番号: '{fullpath}'")
     # 多分片影片容易有文件大小低于阈值的子片，进行特殊处理
     has_avid = {}
     for name in list(small_videos.keys()):
@@ -98,11 +155,18 @@ def scan_movies(root: str) -> List[Movie]:
         if len(files) == 1:
             continue
         dirs = set([os.path.split(i)[0] for i in files])
-        # 不同位置的多部影片有相同番号时，略过并报错
+        # 不同位置的多部影片有相同番号时，尝试智能选择最佳版本
         if len(dirs) > 1:
-            non_slice_dup[avid] = files
-            del dic[avid]
-            continue
+            # 尝试根据文件质量标识选择最佳版本
+            best_file = select_best_quality_file(files)
+            if best_file:
+                logger.info(f"检测到多个版本的文件 {avid}，自动选择最佳质量版本: {os.path.basename(best_file)}")
+                dic[avid] = [best_file]
+                continue
+            else:
+                non_slice_dup[avid] = files
+                del dic[avid]
+                continue
         # 提取分片信息（如果正则替换成功，只会剩下单个小写字符）。相关变量都要使用同样的列表生成顺序
         basenames = [os.path.basename(i) for i in files]
         prefix = os.path.commonprefix(basenames)

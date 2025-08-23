@@ -15,6 +15,11 @@ def get_id(filepath_str: str) -> str:
     # 通常是接收文件的路径，当然如果是普通字符串也可以
     ignore_pattern = re.compile('|'.join(Cfg().scanner.ignored_id_pattern))
     norm = ignore_pattern.sub('', filepath.stem).upper()
+    
+    # 检查是否为纯中文/日文文件名，如果是则返回空字符串
+    # 这样可以让用户知道需要手动处理，而不是默默失败
+    if re.match(r'^[\u4e00-\u9fff\u3040-\u309f\u30a0-\u30ff\s\u3000！-～]+$', filepath.stem):
+        return ''
     if 'FC2' in norm:
         # 根据FC2 Club的影片数据，FC2编号为5-7个数字
         match = re.search(r'FC2[^A-Z\d]{0,5}(PPV[^A-Z\d]{0,5})?(\d{5,7})', norm, re.I)

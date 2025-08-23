@@ -213,8 +213,10 @@ def urlretrieve(url, filename=None, reporthook=None, headers=None):
         headers["Referer"] = "https://www.arzon.jp/"
     """使用requests实现urlretrieve"""
     # https://blog.csdn.net/qq_38282706/article/details/80253447
+    timeout = Cfg().network.timeout.total_seconds()
     with contextlib.closing(requests.get(url, headers=headers,
-                                         proxies=read_proxy(), stream=True)) as r:
+                                         proxies=read_proxy(), stream=True, timeout=timeout)) as r:
+        r.raise_for_status()  # 确保HTTP状态码正常
         header = r.headers
         with open(filename, 'wb+') as fp:
             bs = 1024
@@ -224,6 +226,9 @@ def urlretrieve(url, filename=None, reporthook=None, headers=None):
                 size = int(header["Content-Length"])    # 文件总大小（理论值）
             if reporthook:                              # 写入前运行一次回调函数
                 reporthook(blocknum, bs, size)
+            
+            # 添加下载超时保护
+            start_time = time.time()
             for chunk in r.iter_content(chunk_size=1024):
                 if chunk:
                     fp.write(chunk)
@@ -231,11 +236,15 @@ def urlretrieve(url, filename=None, reporthook=None, headers=None):
                     blocknum += 1
                     if reporthook:
                         reporthook(blocknum, bs, size)  # 每写入一次运行一次回调函数
+                    
+                    # 检查总下载时间是否超过了合理限制（比如5分钟）
+                    if time.time() - start_time > 300:  # 5分钟超时
+                        raise requests.exceptions.Timeout("下载超时：文件下载时间超过5分钟")
 
 
 def download(url, output_path, desc=None):
     """下载指定url的资源"""
-    # 支持“下载”本地资源，以供fc2fan的本地镜像所使用
+    # 支持"下载"本地资源，以供fc2fan的本地镜像所使用
     if not url.startswith('http'):
         start_time = time.time()
         shutil.copyfile(url, output_path)
@@ -247,11 +256,22 @@ def download(url, output_path, desc=None):
         desc = url.split('/')[-1]
     referrer = headers.copy()
     referrer['referer'] = url[:url.find('/', 8)+1]  # 提取base_url部分
-    with DownloadProgressBar(unit='B', unit_scale=True,
-                             miniters=1, desc=desc, leave=False) as t:
-        urlretrieve(url, filename=output_path, reporthook=t.update_to, headers=referrer)
-        info = {k: t.format_dict[k] for k in ('total', 'elapsed', 'rate')}
-        return info
+    
+    # 添加下载超时日志记录
+    logger.debug(f"开始下载: {url}")
+    start_download_time = time.time()
+    
+    try:
+        with DownloadProgressBar(unit='B', unit_scale=True,
+                                 miniters=1, desc=desc, leave=False) as t:
+            urlretrieve(url, filename=output_path, reporthook=t.update_to, headers=referrer)
+            info = {k: t.format_dict[k] for k in ('total', 'elapsed', 'rate')}
+            logger.debug(f"下载完成: {url}, 耗时: {info['elapsed']:.2f}秒")
+            return info
+    except Exception as e:
+        elapsed = time.time() - start_download_time
+        logger.debug(f"下载失败: {url}, 耗时: {elapsed:.2f}秒, 错误: {e}")
+        raise
 
 
 def open_in_chrome(url, new=0, autoraise=True):

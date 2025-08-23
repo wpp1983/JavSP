@@ -112,12 +112,29 @@ class EnhancedSession:
             'Cache-Control': 'max-age=0',
         }
     
+    def test_connection(self, url=None):
+        """测试网络连接和代理状态"""
+        test_url = url or f'{permanent_url}/test'
+        try:
+            response = self.session.get(
+                test_url,
+                headers=self.get_random_headers(),
+                timeout=5,
+                allow_redirects=True
+            )
+            return True, response.status_code
+        except Exception as e:
+            return False, str(e)
+
     def get_with_retry(self, url, max_attempts=None):
-        """带重试的GET请求，支持SSL错误处理"""
+        """带重试的GET请求，支持SSL错误处理和连接诊断"""
         if max_attempts is None:
             max_attempts = Cfg().network.retry
             
         last_exception = None
+        
+        # 第一次失败时测试基础连接
+        connection_tested = False
         
         for attempt in range(max_attempts):
             try:
@@ -158,6 +175,15 @@ class EnhancedSession:
                     
             except requests.exceptions.RequestException as e:
                 last_exception = e
+                # 在第一次网络错误时测试基础连接
+                if not connection_tested and attempt == 0:
+                    connection_tested = True
+                    conn_ok, conn_result = self.test_connection()
+                    if not conn_ok:
+                        logger.warning(f'javbus2: 基础连接测试失败: {conn_result}')
+                        if 'proxy' in str(conn_result).lower():
+                            logger.warning('javbus2: 可能的代理连接问题，请检查代理设置')
+                
                 logger.debug(f'javbus2: 网络错误 ({attempt + 1}/{max_attempts}): {e}')
                 if attempt == max_attempts - 1:
                     raise
@@ -262,10 +288,11 @@ def parse_data(movie: MovieInfo):
         actual_dvdid = standardized_dvdid
         
     except MovieNotFoundError as e:
-        failed_logger.info(f'影片未找到: {original_dvdid} (标准化: {standardized_dvdid}) - {str(e)}')
+        failed_logger.info(f'影片未找到: {original_dvdid} (标准化: {standardized_dvdid}) - URL: {url} - {str(e)}')
         raise
     except Exception as e:
-        failed_logger.info(f'抓取失败: {original_dvdid} (标准化: {standardized_dvdid}) - {str(e)}')
+        error_type = type(e).__name__
+        failed_logger.info(f'抓取失败: {original_dvdid} (标准化: {standardized_dvdid}) - URL: {url} - 错误类型: {error_type} - 详情: {str(e)}')
         logger.debug(f'javbus2: 番号 {standardized_dvdid} 出现异常: {e}')
         raise
     
@@ -405,7 +432,8 @@ def parse_data(movie: MovieInfo):
     except (MovieNotFoundError, SiteBlocked):
         raise
     except Exception as e:
-        failed_logger.info(f'数据解析失败: {original_dvdid} (标准化: {actual_dvdid}) - {str(e)}')
+        error_type = type(e).__name__
+        failed_logger.info(f'数据解析失败: {original_dvdid} (标准化: {actual_dvdid}) - URL: {url} - 错误类型: {error_type} - 详情: {str(e)}')
         logger.error(f'javbus2: 抓取数据时发生异常: {e}', exc_info=True)
         raise WebsiteError(f'javbus2: 抓取数据失败: {e}')
 
@@ -419,7 +447,8 @@ def parse_clean_data(movie: MovieInfo):
             movie.genre_id = None  # 清空genre id，表明已完成转换
         logger.info(f'javbus2: 数据抓取和清洗完成: {movie.dvdid}')
     except Exception as e:
-        failed_logger.info(f'数据清洗失败: {movie.dvdid} - {str(e)}')
+        error_type = type(e).__name__
+        failed_logger.info(f'数据清洗失败: {movie.dvdid} - 错误类型: {error_type} - 详情: {str(e)}')
         logger.error(f'javbus2: 数据清洗失败: {e}')
         raise
 

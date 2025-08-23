@@ -25,11 +25,11 @@ scanner:
 network:
   # 设置代理服务器地址，支持 http, socks5/socks5h 代理，比如'http://127.0.0.1:1080'
   # null表示禁用代理
-  proxy_server: http://192.168.50.36:8234
+  proxy_server: null
   # 网络问题导致抓取数据失败时的重试次数，通常3次就差不多了
   retry: 3
   # https://en.wikipedia.org/wiki/ISO_8601#Durations
-  timeout: PT10S
+  timeout: PT15S
 
 ################################
 crawler:
@@ -150,4 +150,4 @@ other:
   # 是否允许检查到新版本时自动下载
   auto_update: false
   # 日志级别: DEBUG, INFO, WARNING, ERROR
-  log_level: WARNING
+  log_level: DEBUG

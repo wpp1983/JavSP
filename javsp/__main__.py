@@ -462,7 +462,8 @@ def RunNormalMode(all_movies):
             # 依次执行各个步骤
             inner_bar.set_description(f'启动并发任务')
             all_info = parallel_crawler(movie, inner_bar)
-            msg = f'为其配置的{len(Cfg().crawler.selection[movie.data_src])}个抓取器均未获取到影片信息'
+            crawlers = Cfg().crawler.selection[movie.data_src]
+            msg = f'为其配置的{len(crawlers)}个抓取器({", ".join(crawlers)})均未获取到影片信息。番号: {movie.dvdid}'
             check_step(all_info, msg)
 
             inner_bar.set_description('汇总数据')
