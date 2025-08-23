@@ -41,19 +41,29 @@ def setup_logging(log_level='INFO'):
     # 设置根日志器级别
     root_logger.setLevel(numeric_level)
     
-    # 如果没有处理器，添加一个StreamHandler
+    # 如果没有处理器，添加处理器
     if not root_logger.handlers:
-        handler = logging.StreamHandler(TqdmOut)
-        formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-        handler.setFormatter(formatter)
-        root_logger.addHandler(handler)
+        # 添加控制台输出处理器
+        console_handler = logging.StreamHandler(TqdmOut)
+        console_formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+        console_handler.setFormatter(console_formatter)
+        root_logger.addHandler(console_handler)
+        
+        # 确保logs目录存在
+        os.makedirs('logs', exist_ok=True)
+        
+        # 添加文件输出处理器
+        file_handler = logging.FileHandler('logs/javsp.log', encoding='utf-8')
+        file_formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+        file_handler.setFormatter(file_formatter)
+        root_logger.addHandler(file_handler)
     
     # 设置所有处理器的级别
     for handler in root_logger.handlers:
         handler.setLevel(numeric_level)
 
 
-from javsp.lib import resource_path
+from javsp.lib import resource_path, truncate_filename
 from javsp.nfo import write_nfo
 from javsp.file import *
 from javsp.func import *
@@ -285,6 +295,97 @@ def generate_names(movie: Movie):
             所以这里对文件路径进行合法化
         """
         return ''.join(c for c in path if c not in {'\n'})
+    
+    def smart_truncate_path(full_path: str, max_remaining: int = 0) -> str:
+        """智能截断路径以符合系统限制
+        
+        Args:
+            full_path: 完整路径
+            max_remaining: 最大剩余长度（如果为0则使用配置的最大长度）
+            
+        Returns:
+            截断后的路径
+        """
+        if max_remaining <= 0:
+            remaining = get_remaining_path_len(full_path)
+            if remaining >= 0:
+                return full_path
+            # 需要截断的长度
+            over_length = abs(remaining)
+        else:
+            remaining = get_remaining_path_len(full_path)
+            if remaining >= max_remaining:
+                return full_path
+            over_length = max_remaining - remaining
+        
+        # 分离目录和文件名
+        directory, filename = os.path.split(full_path)
+        
+        # 优先截断文件名，因为目录结构通常更重要
+        if filename:
+            # 使用我们的智能截断函数
+            max_filename_len = len(filename) - min(over_length, len(filename) - 10)  # 至少保留10个字符
+            if max_filename_len > 0:
+                truncated_filename = truncate_filename(
+                    filename, 
+                    max_filename_len,
+                    Cfg().summarizer.path.length_by_byte,
+                    preserve_ext=True
+                )
+                new_path = os.path.join(directory, truncated_filename)
+                
+                # 检查截断后的路径是否符合要求
+                if get_remaining_path_len(new_path) >= max_remaining:
+                    return new_path
+        
+        # 如果仅截断文件名还不够，则也需要截断目录名
+        path_parts = []
+        current_dir = directory
+        while current_dir and current_dir != os.path.dirname(current_dir):
+            parent, dirname = os.path.split(current_dir)
+            path_parts.insert(0, dirname)
+            current_dir = parent
+        
+        # 从最后一级目录开始截断
+        for i in range(len(path_parts) - 1, -1, -1):
+            if path_parts[i]:
+                original_len = len(path_parts[i])
+                # 逐步缩短目录名
+                for new_len in range(original_len - 1, max(5, original_len // 2), -1):
+                    truncated_dir = truncate_filename(
+                        path_parts[i], 
+                        new_len,
+                        Cfg().summarizer.path.length_by_byte,
+                        preserve_ext=False
+                    )
+                    path_parts[i] = truncated_dir
+                    
+                    # 重新构建路径测试
+                    test_dir = os.path.join(current_dir, *path_parts) if path_parts else current_dir
+                    test_path = os.path.join(test_dir, filename)
+                    
+                    if get_remaining_path_len(test_path) >= max_remaining:
+                        return test_path
+        
+        # 如果还是不行，最后做硬截断
+        if by_byte := Cfg().summarizer.path.length_by_byte:
+            path_bytes = full_path.encode('utf-8')
+            target_len = len(path_bytes) - over_length
+            if target_len > 0:
+                truncated_bytes = path_bytes[:target_len]
+                while truncated_bytes:
+                    try:
+                        truncated_bytes.decode('utf-8')
+                        break
+                    except UnicodeDecodeError:
+                        truncated_bytes = truncated_bytes[:-1]
+                return truncated_bytes.decode('utf-8', errors='ignore')
+        else:
+            target_len = len(full_path) - over_length
+            if target_len > 0:
+                return full_path[:target_len]
+        
+        return full_path
 
     info = movie.info
     # 准备用来填充命名模板的字典
@@ -336,49 +437,70 @@ def generate_names(movie: Movie):
 
     copyd['num'] = copyd['num'] + movie.attr_str
     longest_ext = max((os.path.splitext(i)[1] for i in movie.files), key=len)
-    for end in range(len(ori_title_break), 0, -1):
-        copyd['rawtitle'] = replace_illegal_chars(''.join(ori_title_break[:end]).strip())
-        for sub_end in range(len(title_break), 0, -1):
-            copyd['title'] = replace_illegal_chars(''.join(title_break[:sub_end]).strip())
-            if Cfg().summarizer.move_files:
-                save_dir = os.path.normpath(Cfg().summarizer.path.output_folder_pattern.format(**copyd)).strip()
-                basename = os.path.normpath(Cfg().summarizer.path.basename_pattern.format(**copyd)).strip()
-            else:
-                # 如果不整理文件，则保存抓取的数据到当前目录
-                save_dir = os.path.dirname(movie.files[0])
-                filebasename = os.path.basename(movie.files[0])
-                ext = os.path.splitext(filebasename)[1]
-                basename = filebasename.replace(ext, '')
-            long_path = os.path.join(save_dir, basename+longest_ext)
-            remaining = get_remaining_path_len(os.path.abspath(long_path))
-            if remaining > 0:
-                movie.save_dir = save_dir
-                movie.basename = basename
-                movie.nfo_file = os.path.join(save_dir, Cfg().summarizer.nfo.basename_pattern.format(**copyd) + '.nfo')
-                movie.fanart_file = os.path.join(save_dir, Cfg().summarizer.fanart.basename_pattern.format(**copyd) + '.jpg')
-                movie.poster_file = os.path.join(save_dir, Cfg().summarizer.cover.basename_pattern.format(**copyd) + '.jpg')
-                return legalize_info()
+    
+    # 生成初始路径
+    if Cfg().summarizer.move_files:
+        save_dir = os.path.normpath(Cfg().summarizer.path.output_folder_pattern.format(**copyd)).strip()
+        basename = os.path.normpath(Cfg().summarizer.path.basename_pattern.format(**copyd)).strip()
     else:
-        # 以防万一，当整理路径非常深或者标题起始很长一段没有标点符号时，硬性截短生成的名称
-        copyd['title'] = copyd['title'][:remaining]
-        copyd['rawtitle'] = copyd['rawtitle'][:remaining]
         # 如果不整理文件，则保存抓取的数据到当前目录
-        if not Cfg().summarizer.move_files:
-            save_dir = os.path.dirname(movie.files[0])
-            filebasename = os.path.basename(movie.files[0])
-            ext = os.path.splitext(filebasename)[1]
-            basename = filebasename.replace(ext, '')
+        save_dir = os.path.dirname(movie.files[0])
+        filebasename = os.path.basename(movie.files[0])
+        ext = os.path.splitext(filebasename)[1]
+        basename = filebasename.replace(ext, '')
+    
+    # 检查路径长度并智能截断
+    long_path = os.path.join(save_dir, basename + longest_ext)
+    remaining = get_remaining_path_len(os.path.abspath(long_path))
+    
+    if remaining < 0:
+        logger.info(f"文件路径过长，正在智能截断: {os.path.basename(long_path)}")
+        
+        # 尝试通过缩短标题来解决问题
+        for end in range(len(ori_title_break), max(1, len(ori_title_break) // 2), -1):
+            copyd['rawtitle'] = replace_illegal_chars(''.join(ori_title_break[:end]).strip())
+            for sub_end in range(len(title_break), max(1, len(title_break) // 2), -1):
+                copyd['title'] = replace_illegal_chars(''.join(title_break[:sub_end]).strip())
+                
+                if Cfg().summarizer.move_files:
+                    test_save_dir = os.path.normpath(Cfg().summarizer.path.output_folder_pattern.format(**copyd)).strip()
+                    test_basename = os.path.normpath(Cfg().summarizer.path.basename_pattern.format(**copyd)).strip()
+                else:
+                    test_save_dir = save_dir
+                    test_basename = basename
+                    
+                test_path = os.path.join(test_save_dir, test_basename + longest_ext)
+                if get_remaining_path_len(os.path.abspath(test_path)) >= 0:
+                    save_dir = test_save_dir
+                    basename = test_basename
+                    long_path = test_path
+                    break
+            else:
+                continue
+            break
         else:
-            save_dir = os.path.normpath(Cfg().summarizer.path.output_folder_pattern.format(**copyd)).strip()
-            basename = os.path.normpath(Cfg().summarizer.path.basename_pattern.format(**copyd)).strip()
-        movie.save_dir = save_dir
-        movie.basename = basename
+            # 如果缩短标题还不够，使用智能截断
+            truncated_path = smart_truncate_path(long_path)
+            save_dir = os.path.dirname(truncated_path)
+            basename = os.path.splitext(os.path.basename(truncated_path))[0]
+            logger.info(f"路径已截断为: {os.path.basename(truncated_path)}")
+    
+    # 设置最终的文件路径
+    movie.save_dir = save_dir
+    movie.basename = basename
+    movie.nfo_file = os.path.join(save_dir, Cfg().summarizer.nfo.basename_pattern.format(**copyd) + '.nfo')
+    movie.fanart_file = os.path.join(save_dir, Cfg().summarizer.fanart.basename_pattern.format(**copyd) + '.jpg')
+    movie.poster_file = os.path.join(save_dir, Cfg().summarizer.cover.basename_pattern.format(**copyd) + '.jpg')
+    
+    # 检查并截断其他文件路径
+    if get_remaining_path_len(os.path.abspath(movie.nfo_file)) < 0:
+        movie.nfo_file = smart_truncate_path(movie.nfo_file)
+    if get_remaining_path_len(os.path.abspath(movie.fanart_file)) < 0:
+        movie.fanart_file = smart_truncate_path(movie.fanart_file)
+    if get_remaining_path_len(os.path.abspath(movie.poster_file)) < 0:
+        movie.poster_file = smart_truncate_path(movie.poster_file)
 
-        movie.nfo_file = os.path.join(save_dir, Cfg().summarizer.nfo.basename_pattern.format(**copyd) + '.nfo')
-        movie.fanart_file = os.path.join(save_dir, Cfg().summarizer.fanart.basename_pattern.format(**copyd) + '.jpg')
-        movie.poster_file = os.path.join(save_dir, Cfg().summarizer.cover.basename_pattern.format(**copyd) + '.jpg')
-
-        return legalize_info()
+    return legalize_info()
 
 def reviewMovieID(all_movies, root):
     """人工检查每一部影片的番号"""

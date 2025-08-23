@@ -20,6 +20,7 @@ class Scanner(BaseConfig):
 
 class CrawlerID(str, Enum):
     javbus2 = 'javbus2'
+    avwiki = 'avwiki'
 
 class Network(BaseConfig):
     proxy_server: Url | None
@@ -112,6 +113,7 @@ class PathSummarize(BaseConfig):
     length_by_byte: bool
     max_actress_count: PositiveInt = 10
     hard_link: bool
+    cleanup_empty_folders: bool = True
 
 class TitleSummarize(BaseConfig):
     remove_trailing_actor_name: bool

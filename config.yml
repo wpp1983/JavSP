@@ -36,11 +36,11 @@ crawler:
   # 要使用的爬虫列表（汇总数据时从前到后进行）
   # airav avsox avwiki fanza fc2 fc2fan javbus javdb javlib javmenu jav321 mgstage prestige arzon arzon_iv
   selection:
-    normal: [javbus2]
-    fc2: [javbus2]
-    cid: [javbus2]
-    getchu: [javbus2]
-    gyutto: [javbus2]
+    normal: [javbus2, avwiki]
+    fc2: [javbus2, avwiki]
+    cid: [javbus2, avwiki]
+    getchu: [javbus2, avwiki]
+    gyutto: [javbus2, avwiki]
   # 爬虫至少要获取到哪些字段才可以视为抓取成功？
   required_keys: [cover, title]
   # 努力爬取更准确更丰富的信息（会略微增加部分站点的爬取耗时）
@@ -79,6 +79,8 @@ summarizer:
     max_actress_count: 10
     # 是否用硬链接方式整理文件？硬链接可以节省空间，但不是所有文件系统都支持
     hard_link: false
+    # 整理完成后是否自动清理原文件夹（仅当文件夹只包含图片、元数据等可删除文件时）
+    cleanup_empty_folders: true
 
   #标题处理
   title:
@@ -150,4 +152,4 @@ other:
   # 是否允许检查到新版本时自动下载
   auto_update: false
   # 日志级别: DEBUG, INFO, WARNING, ERROR
-  log_level: DEBUG
+  log_level: INFO

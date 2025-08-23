@@ -24,7 +24,8 @@ logger = logging.getLogger(__name__)
 
 # 配置失败日志记录器
 failed_logger = logging.getLogger('javbus2_failed')
-failed_handler = logging.FileHandler('failed.log', encoding='utf-8')
+#os.makedirs('logs', exist_ok=True)
+failed_handler = logging.FileHandler('logs/failed.log', encoding='utf-8')
 failed_formatter = logging.Formatter('%(asctime)s - %(message)s')
 failed_handler.setFormatter(failed_formatter)
 failed_logger.addHandler(failed_handler)

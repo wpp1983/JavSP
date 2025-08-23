@@ -7,7 +7,7 @@ import logging
 from functools import cached_property
 
 from javsp.config import Cfg
-from javsp.lib import resource_path, detect_special_attr
+from javsp.lib import resource_path, detect_special_attr, is_folder_safe_to_delete
 
 
 logger = logging.getLogger(__name__)
@@ -169,12 +169,29 @@ class Movie:
 
     def rename_files(self, use_hardlink: bool = False) -> None:
         """根据命名规则移动（重命名）影片文件"""
-        def move_file(src:str, dst:str):
-            """移动（重命名）文件并记录信息到日志"""
+        def move_file(src:str, dst:str) -> bool:
+            """移动（重命名）文件并记录信息到日志
+            
+            Returns:
+                bool: True if file was moved, False if source was deleted due to duplicate
+            """
             abs_dst = os.path.abspath(dst)
-            # shutil.move might overwrite dst file
+            abs_src = os.path.abspath(src)
+            
+            # 如果目标文件已存在，删除源文件（当前正在处理的文件）
             if os.path.exists(abs_dst):
-                raise FileExistsError(f'File exists: {abs_dst}')
+                logger.info(f'目标文件已存在，删除当前文件: {os.path.relpath(src)}')
+                try:
+                    os.remove(abs_src)
+                    logger.debug(f'已删除重复的源文件: {abs_src}')
+                    return False  # 源文件被删除，没有进行移动
+                except OSError as e:
+                    logger.error(f'删除重复文件失败: {abs_src}, 错误: {e}')
+                    raise FileExistsError(f'目标文件已存在且无法删除源文件: {abs_dst}')
+            
+            # 确保目标目录存在
+            os.makedirs(os.path.dirname(abs_dst), exist_ok=True)
+            
             if (use_hardlink):
                 os.link(src, abs_dst)
             else:
@@ -184,6 +201,7 @@ class Movie:
             logger.info(f"重命名文件: '{src_rel}' -> '...{os.sep}{dst_name}'")
             # 目前StreamHandler并未设置filter，为了避免显示中出现重复的日志，这里暂时只能用debug级别
             filemove_logger.debug(f'移动（重命名）文件: \n  原路径: "{src}"\n  新路径: "{abs_dst}"')
+            return True  # 文件成功移动
 
         new_paths = []
         dir = os.path.dirname(self.files[0])
@@ -191,18 +209,68 @@ class Movie:
             fullpath = self.files[0]
             ext = os.path.splitext(fullpath)[1]
             newpath = os.path.join(self.save_dir, self.basename + ext)
-            move_file(fullpath, newpath)
-            new_paths.append(newpath)
+            if move_file(fullpath, newpath):
+                new_paths.append(newpath)
         else:
             for i, fullpath in enumerate(self.files, start=1):
                 ext = os.path.splitext(fullpath)[1]
                 newpath = os.path.join(self.save_dir, self.basename + f'-CD{i}' + ext)
-                move_file(fullpath, newpath)
-                new_paths.append(newpath)
+                if move_file(fullpath, newpath):
+                    new_paths.append(newpath)
         self.new_paths = new_paths
-        if len(os.listdir(dir)) == 0:
-            #如果移动文件后目录为空则删除该目录
-            os.rmdir(dir)
+        
+        # 根据配置决定是否进行文件夹清理
+        if Cfg().summarizer.path.cleanup_empty_folders:
+            self._cleanup_source_folder(dir)
+    
+    def _cleanup_source_folder(self, folder_path: str) -> None:
+        """清理源文件夹，如果只包含可删除的文件（图片、元数据等）则删除整个文件夹"""
+        if not os.path.exists(folder_path) or not os.path.isdir(folder_path):
+            return
+        
+        try:
+            # 使用配置中的视频扩展名
+            video_extensions = Cfg().scanner.filename_extensions
+            can_delete, important_files = is_folder_safe_to_delete(folder_path, video_extensions)
+            
+            if can_delete:
+                # 删除文件夹中的所有文件
+                for item in os.listdir(folder_path):
+                    item_path = os.path.join(folder_path, item)
+                    try:
+                        if os.path.isfile(item_path):
+                            os.remove(item_path)
+                            logger.debug(f'删除文件: {item}')
+                        elif os.path.isdir(item_path):
+                            # 递归删除子目录（如果为空）
+                            try:
+                                os.rmdir(item_path)
+                                logger.debug(f'删除空子目录: {item}')
+                            except OSError:
+                                logger.debug(f'子目录非空，跳过: {item}')
+                    except OSError as e:
+                        logger.warning(f'删除文件失败: {item}, 错误: {e}')
+                
+                # 删除空文件夹
+                try:
+                    os.rmdir(folder_path)
+                    logger.info(f'已清理源文件夹: {folder_path}')
+                except OSError as e:
+                    logger.debug(f'删除源文件夹失败: {folder_path}, 错误: {e}')
+            else:
+                if important_files:
+                    logger.debug(f'源文件夹包含重要文件，跳过清理: {folder_path}')
+                    logger.debug(f'重要文件列表: {important_files}')
+                else:
+                    logger.debug(f'源文件夹为空，删除: {folder_path}')
+                    try:
+                        os.rmdir(folder_path)
+                        logger.info(f'已删除空文件夹: {folder_path}')
+                    except OSError:
+                        pass
+                        
+        except Exception as e:
+            logger.debug(f'文件夹清理时出错: {folder_path}, 错误: {e}')
 
 
 class GenreMap(dict):
