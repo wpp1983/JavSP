@@ -9,11 +9,11 @@ import (
 
 	"javsp-go/internal/config"
 	"javsp-go/internal/datatype"
+	"javsp-go/pkg/progress"
 )
 
 // EngineConfig contains configuration for the crawler engine
 type EngineConfig struct {
-	MaxConcurrentCrawlers int           `json:"max_concurrent_crawlers"`
 	DefaultTimeout        time.Duration `json:"default_timeout"`
 	RetryEnabled          bool          `json:"retry_enabled"`
 	MaxRetries            int           `json:"max_retries"`
@@ -30,12 +30,16 @@ type CrawlResult struct {
 	Timestamp time.Time           `json:"timestamp"`
 }
 
+// CrawlerProgressCallback is called with crawler progress updates
+type CrawlerProgressCallback func(crawlerName, message string, progress float64, elapsed time.Duration, remaining time.Duration)
+
 // Engine coordinates multiple crawlers for movie information extraction
 type Engine struct {
-	registry *CrawlerRegistry
-	config   *EngineConfig
-	stats    *EngineStats
-	mu       sync.RWMutex
+	registry         *CrawlerRegistry
+	config           *EngineConfig
+	stats            *EngineStats
+	mu               sync.RWMutex
+	progressCallback CrawlerProgressCallback
 }
 
 // EngineStats tracks engine performance statistics
@@ -54,7 +58,6 @@ func NewEngine(cfg *config.Config) (*Engine, error) {
 	
 	// Create default engine config
 	engineConfig := &EngineConfig{
-		MaxConcurrentCrawlers: 5,
 		DefaultTimeout:        30 * time.Second,
 		RetryEnabled:          true,
 		MaxRetries:            3,
@@ -108,14 +111,14 @@ func (e *Engine) initDefaultCrawlers(cfg *config.Config) error {
 	}
 
 	// Initialize JavBus crawler
-	javbusCrawler, err := NewJavBusCrawler(crawlerConfig)
+	javbusCrawler, err := NewJavBusCrawlerWithConfig(crawlerConfig, cfg)
 	if err != nil {
 		return fmt.Errorf("failed to create JavBus crawler: %w", err)
 	}
 	e.registry.Register("javbus2", javbusCrawler)
 
 	// Initialize AVWiki crawler
-	avwikiCrawler, err := NewAVWikiCrawler(crawlerConfig)
+	avwikiCrawler, err := NewAVWikiCrawlerWithConfig(crawlerConfig, cfg)
 	if err != nil {
 		return fmt.Errorf("failed to create AVWiki crawler: %w", err)
 	}
@@ -127,6 +130,13 @@ func (e *Engine) initDefaultCrawlers(cfg *config.Config) error {
 // RegisterCrawler registers a new crawler
 func (e *Engine) RegisterCrawler(name string, crawler Crawler) {
 	e.registry.Register(name, crawler)
+}
+
+// SetProgressCallback sets the progress callback for crawler operations
+func (e *Engine) SetProgressCallback(callback CrawlerProgressCallback) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.progressCallback = callback
 }
 
 // GetAvailableCrawlers returns a list of available crawler names
@@ -141,50 +151,26 @@ func (e *Engine) GetAvailableCrawlers() []string {
 	return names
 }
 
-// CrawlMovie fetches movie information using multiple crawlers concurrently
+// CrawlMovie fetches movie information using multiple crawlers serially
 func (e *Engine) CrawlMovie(ctx context.Context, movieID string, crawlerNames ...string) ([]*CrawlResult, error) {
 	if len(crawlerNames) == 0 {
 		crawlerNames = e.GetAvailableCrawlers()
 	}
 
 	results := make([]*CrawlResult, 0, len(crawlerNames))
-	resultChan := make(chan *CrawlResult, len(crawlerNames))
 	
 	// Create context with timeout
 	crawlCtx, cancel := context.WithTimeout(ctx, e.config.DefaultTimeout)
 	defer cancel()
 
-	// Launch concurrent crawlers with semaphore for rate limiting
-	semaphore := make(chan struct{}, e.config.MaxConcurrentCrawlers)
-	var wg sync.WaitGroup
-
+	// Execute crawlers serially
 	for _, crawlerName := range crawlerNames {
 		crawler, exists := e.registry.Get(crawlerName)
 		if !exists {
 			continue
 		}
 
-		wg.Add(1)
-		go func(name string, c Crawler) {
-			defer wg.Done()
-			
-			// Acquire semaphore
-			semaphore <- struct{}{}
-			defer func() { <-semaphore }()
-
-			result := e.crawlSingle(crawlCtx, name, c, movieID)
-			resultChan <- result
-		}(crawlerName, crawler)
-	}
-
-	// Wait for all crawlers to complete
-	go func() {
-		wg.Wait()
-		close(resultChan)
-	}()
-
-	// Collect results
-	for result := range resultChan {
+		result := e.crawlSingle(crawlCtx, crawlerName, crawler, movieID)
 		results = append(results, result)
 		e.updateStats(result)
 	}
@@ -204,17 +190,37 @@ func (e *Engine) crawlSingle(ctx context.Context, crawlerName string, crawler Cr
 		Timestamp: start,
 	}
 
+	// Create progress tracker if callback is set
+	var tracker *progress.ProgressTracker
+	if e.progressCallback != nil {
+		timeout := e.config.DefaultTimeout
+		message := fmt.Sprintf("Fetching from %s", crawlerName)
+		
+		tracker = progress.NewProgressTracker(message, timeout, func(msg string, prog float64, remaining time.Duration) {
+			elapsed := time.Since(start)
+			e.progressCallback(crawlerName, msg, prog, elapsed, remaining)
+		})
+		defer tracker.Done()
+	}
+
+	// Set up web client progress callback if the crawler supports it
+	// This will be handled by the crawler's own progress reporting
+
 	// Perform crawling with retry logic
 	var movieInfo *datatype.MovieInfo
 	var err error
 
 	maxAttempts := 1
 	if e.config.RetryEnabled {
-		maxAttempts = e.config.MaxRetries + 1
+		maxAttempts = e.config.MaxRetries
 	}
 
 	for attempt := 0; attempt < maxAttempts; attempt++ {
 		if attempt > 0 {
+			if tracker != nil {
+				tracker.UpdateMessage(fmt.Sprintf("Retrying %s (attempt %d/%d)", crawlerName, attempt+1, maxAttempts))
+			}
+			
 			// Wait before retry
 			select {
 			case <-ctx.Done():
@@ -222,10 +228,15 @@ func (e *Engine) crawlSingle(ctx context.Context, crawlerName string, crawler Cr
 				break
 			case <-time.After(e.config.RetryDelay):
 			}
+		} else if tracker != nil {
+			tracker.UpdateMessage(fmt.Sprintf("Connecting to %s", crawlerName))
 		}
 
 		movieInfo, err = crawler.FetchMovieInfo(ctx, movieID)
 		if err == nil {
+			if tracker != nil {
+				tracker.UpdateMessage(fmt.Sprintf("Successfully fetched from %s", crawlerName))
+			}
 			break
 		}
 
@@ -238,6 +249,15 @@ func (e *Engine) crawlSingle(ctx context.Context, crawlerName string, crawler Cr
 	result.Duration = time.Since(start)
 	result.MovieInfo = movieInfo
 	result.Error = err
+
+	// Update progress with final result
+	if tracker != nil {
+		if err != nil {
+			tracker.Fail(err)
+		} else {
+			tracker.Done()
+		}
+	}
 
 	// Update crawler statistics
 	e.registry.UpdateStats(crawlerName, err == nil, result.Duration)
@@ -270,42 +290,26 @@ func (e *Engine) shouldRetry(err error) bool {
 	return true
 }
 
-// CrawlBatch performs batch crawling for multiple movie IDs
+// CrawlBatch performs batch crawling for multiple movie IDs serially
 func (e *Engine) CrawlBatch(ctx context.Context, movieIDs []string, crawlerNames ...string) (map[string][]*CrawlResult, error) {
 	results := make(map[string][]*CrawlResult)
-	resultMutex := sync.Mutex{}
 	
-	// Create semaphore for controlling concurrent batch operations
-	semaphore := make(chan struct{}, e.config.MaxConcurrentCrawlers)
-	var wg sync.WaitGroup
-
+	// Process each movie ID serially
 	for _, movieID := range movieIDs {
-		wg.Add(1)
-		go func(id string) {
-			defer wg.Done()
-			
-			// Acquire semaphore
-			semaphore <- struct{}{}
-			defer func() { <-semaphore }()
-
-			crawlResults, err := e.CrawlMovie(ctx, id, crawlerNames...)
-			if err != nil {
-				// Create error result
-				errorResult := &CrawlResult{
-					Source:    "engine",
-					Error:     err,
-					Timestamp: time.Now(),
-				}
-				crawlResults = []*CrawlResult{errorResult}
+		crawlResults, err := e.CrawlMovie(ctx, movieID, crawlerNames...)
+		if err != nil {
+			// Create error result
+			errorResult := &CrawlResult{
+				Source:    "engine",
+				Error:     err,
+				Timestamp: time.Now(),
 			}
-
-			resultMutex.Lock()
-			results[id] = crawlResults
-			resultMutex.Unlock()
-		}(movieID)
+			crawlResults = []*CrawlResult{errorResult}
+		}
+		
+		results[movieID] = crawlResults
 	}
 
-	wg.Wait()
 	return results, nil
 }
 

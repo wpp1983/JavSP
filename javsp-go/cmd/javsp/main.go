@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"javsp-go/internal/config"
@@ -14,6 +15,7 @@ import (
 	"javsp-go/internal/nfo"
 	"javsp-go/internal/organizer"
 	"javsp-go/internal/scanner"
+	"javsp-go/pkg/ui"
 )
 
 var (
@@ -111,117 +113,243 @@ func processJavSP(cfg *config.Config) error {
 	processedCount := 0
 	successCount := 0
 	
+	// Initialize color system
+	ui.SetColorEnabled(true) // Enable by default, can be controlled by config later
+	
+	// Create progress display
+	progressDisplay := ui.NewMovieProgressDisplay(len(scanResult.Movies))
+	displayLines := 0
+	
 	for i, movie := range scanResult.Movies {
-		fmt.Printf("[%d/%d] Processing: %s\n", i+1, len(scanResult.Movies), movie.FileName)
 		processedCount++
+		
+		// Start movie processing
+		progressDisplay.StartMovie(i+1, movie.FileName)
 		
 		// Get movie ID for crawling
 		movieID := movie.GetID()
 		if movieID == "" {
-			fmt.Printf("  ❌ No valid movie ID found, skipping\n\n")
+			progressDisplay.UpdateStep(ui.Error("❌ No valid movie ID found"))
+			progressDisplay.FinishMovie(false)
+			
+			// Display current state
+			if displayLines > 0 {
+				progressDisplay.MoveCursorUp(displayLines)
+			}
+			output := progressDisplay.Render()
+			fmt.Print(output)
+			displayLines = strings.Count(output, "\n")
+			
+			time.Sleep(1 * time.Second)
 			continue
 		}
 		
 		// Step 3a: Crawl metadata
-		fmt.Printf("  📡 Crawling metadata for ID: %s\n", movieID)
+		progressDisplay.UpdateStep(fmt.Sprintf("📡 Crawling metadata for ID: %s", ui.Highlight(movieID)))
+		
+		// Set up progress callback for enhanced crawler display
+		crawlerEngine.SetProgressCallback(func(crawlerName, message string, prog float64, elapsed, remaining time.Duration) {
+			if !cfg.Other.Progress.Enabled {
+				return
+			}
+			
+			var status string
+			var attempt, maxAttempts int = 1, 1
+			
+			// Parse crawler message for status and attempt info
+			if strings.Contains(message, "Connecting") {
+				status = "connecting"
+			} else if strings.Contains(message, "Retrying") {
+				status = "retrying"
+				// Extract attempt information
+				if strings.Contains(message, "attempt") {
+					fmt.Sscanf(message, "Retrying %*s (attempt %d/%d)", &attempt, &maxAttempts)
+				}
+			} else if strings.Contains(message, "Success") {
+				status = "success"
+			} else if strings.Contains(message, "Failed") {
+				status = "failed"
+			} else {
+				status = "connecting"
+			}
+			
+			// Calculate progress based on timeout
+			if remaining > 0 {
+				timeout := elapsed + remaining
+				prog = float64(elapsed) / float64(timeout)
+			}
+			
+			progressDisplay.UpdateCrawler(crawlerName, status, message, prog, elapsed, attempt, maxAttempts)
+			
+			// Update display
+			if displayLines > 0 {
+				progressDisplay.MoveCursorUp(displayLines)
+			}
+			output := progressDisplay.Render()
+			fmt.Print(output)
+			displayLines = strings.Count(output, "\n")
+		})
+		
 		crawlResults, err := crawlerEngine.CrawlMovie(ctx, movieID)
+		
 		if err != nil {
-			fmt.Printf("  ❌ Crawling failed: %s\n\n", err)
+			progressDisplay.UpdateStep(ui.Error("❌ Crawling failed: " + err.Error()))
+			progressDisplay.FinishMovie(false)
+			
+			// Display current state
+			if displayLines > 0 {
+				progressDisplay.MoveCursorUp(displayLines)
+			}
+			output := progressDisplay.Render()
+			fmt.Print(output)
+			displayLines = strings.Count(output, "\n")
+			
+			time.Sleep(1 * time.Second)
 			continue
 		}
 		
-		// Filter successful crawl results
+		// Process crawl results
 		var validMovieInfos []*datatype.MovieInfo
+		var successSources, failedSources []string
+		
 		for _, result := range crawlResults {
 			if result.Error == nil && result.MovieInfo != nil {
 				validMovieInfos = append(validMovieInfos, result.MovieInfo)
-				fmt.Printf("  ✓ Got data from: %s\n", result.Source)
+				successSources = append(successSources, fmt.Sprintf("%s (%.1fs)", result.Source, result.Duration.Seconds()))
+				// Update crawler status to success
+				progressDisplay.UpdateCrawler(result.Source, "success", "Success", 1.0, result.Duration, 1, 1)
 			} else {
-				fmt.Printf("  ⚠ Failed from %s: %v\n", result.Source, result.Error)
+				failureReason := "unknown error"
+				if result.Error != nil {
+					failureReason = result.Error.Error()
+					if len(failureReason) > 50 {
+						failureReason = failureReason[:47] + "..."
+					}
+				}
+				failedSources = append(failedSources, fmt.Sprintf("%s (%s)", result.Source, failureReason))
+				// Update crawler status to failed
+				progressDisplay.UpdateCrawler(result.Source, "failed", failureReason, 1.0, result.Duration, 1, 1)
 			}
 		}
 		
 		if len(validMovieInfos) == 0 {
-			fmt.Printf("  ❌ No valid metadata found from any source\n\n")
+			progressDisplay.UpdateStep(ui.Error("❌ No valid metadata found from any source"))
+			progressDisplay.FinishMovie(false)
+			
+			// Display current state
+			if displayLines > 0 {
+				progressDisplay.MoveCursorUp(displayLines)
+			}
+			output := progressDisplay.Render()
+			fmt.Print(output)
+			displayLines = strings.Count(output, "\n")
+			
+			time.Sleep(1 * time.Second)
 			continue
 		}
 		
 		// Step 3b: Merge metadata
-		fmt.Printf("  🔗 Merging data from %d sources\n", len(validMovieInfos))
+		progressDisplay.UpdateStep(fmt.Sprintf("🔗 Merging data from %d sources", len(validMovieInfos)))
 		mergeResult, err := merger.Merge(validMovieInfos)
 		if err != nil {
-			fmt.Printf("  ❌ Merging failed: %s\n\n", err)
+			progressDisplay.UpdateStep(ui.Error("❌ Merging failed: " + err.Error()))
+			progressDisplay.FinishMovie(false)
+			
+			// Display current state
+			if displayLines > 0 {
+				progressDisplay.MoveCursorUp(displayLines)
+			}
+			output := progressDisplay.Render()
+			fmt.Print(output)
+			displayLines = strings.Count(output, "\n")
+			
+			time.Sleep(1 * time.Second)
 			continue
 		}
 		
 		// Assign merged info to movie
 		movie.Info = mergeResult.MergedMovie
-		fmt.Printf("  ✓ Merged metadata (Quality: %.1f%%)\n", mergeResult.MergeStats.QualityScore*100)
 		
 		// Step 3c: Generate NFO file
 		nfoPath := getMovieNFOPath(movie, cfg)
-		fmt.Printf("  📝 Generating NFO file: %s\n", nfoPath)
+		progressDisplay.UpdateStep(fmt.Sprintf("📝 Generating NFO file"))
 		if err := nfoGenerator.GenerateToFile(movie.Info, nfoPath); err != nil {
-			fmt.Printf("  ⚠ NFO generation failed: %s\n", err)
-		} else {
-			fmt.Printf("  ✓ NFO file created\n")
+			progressDisplay.UpdateStep(ui.Warning("⚠ NFO generation failed: " + err.Error()))
 		}
 		
 		// Step 3d: Download images
+		progressDisplay.UpdateStep("📥 Downloading images")
 		if err := downloadMovieImages(ctx, movie, imageDownloader, cfg); err != nil {
-			fmt.Printf("  ⚠ Image download failed: %s\n", err)
-		} else {
-			fmt.Printf("  ✓ Images downloaded\n")
+			progressDisplay.UpdateStep(ui.Warning("⚠ Image download failed: " + err.Error()))
 		}
 		
 		// Step 3e: Organize file
 		if cfg.Summarizer.MoveFiles {
-			fmt.Printf("  📁 Organizing file\n")
+			progressDisplay.UpdateStep("📁 Organizing file")
 			operation, err := fileOrganizer.OrganizeMovie(ctx, movie)
 			if err != nil {
-				fmt.Printf("  ⚠ File organization failed: %s\n", err)
+				progressDisplay.UpdateStep(ui.Warning("⚠ File organization failed: " + err.Error()))
 			} else if operation.Status == organizer.StatusCompleted {
-				fmt.Printf("  ✓ File moved to: %s\n", operation.Destination)
+				progressDisplay.UpdateStep(ui.Success("✓ File moved to: " + operation.Destination))
 			} else {
-				fmt.Printf("  ⚠ File organization status: %s\n", operation.Status)
+				progressDisplay.UpdateStep(ui.Warning("⚠ File organization status: " + string(operation.Status)))
 			}
 		} else {
-			fmt.Printf("  ℹ File organization skipped (disabled in config)\n")
+			progressDisplay.UpdateStep(ui.DimText("ℹ File organization skipped (disabled in config)"))
 		}
 		
+		// Mark as successful
 		successCount++
-		fmt.Printf("  ✅ Movie processed successfully\n\n")
+		progressDisplay.UpdateStep(ui.Success("✅ Movie processed successfully"))
+		progressDisplay.FinishMovie(true)
+		
+		// Final display update
+		if displayLines > 0 {
+			progressDisplay.MoveCursorUp(displayLines)
+		}
+		output := progressDisplay.Render()
+		fmt.Print(output)
+		displayLines = strings.Count(output, "\n")
 		
 		// Small delay between movies
-		time.Sleep(100 * time.Millisecond)
+		time.Sleep(500 * time.Millisecond)
 	}
 	
-	// Final summary
-	fmt.Println("=== Processing Complete ===")
-	fmt.Printf("Movies processed: %d/%d\n", processedCount, len(scanResult.Movies))
-	fmt.Printf("Successful: %d\n", successCount)
-	fmt.Printf("Failed: %d\n", processedCount-successCount)
+	// Clear display area for final summary
+	fmt.Print("\n\n")
 	
-	// Show statistics
-	fmt.Println("\n=== Statistics ===")
+	// Collect statistics
+	var crawlerStats, downloadStats, organizerStats map[string]interface{}
+	
 	if engineStats := crawlerEngine.GetStats(); engineStats != nil {
-		fmt.Printf("Crawler requests: %d (success: %d, failed: %d)\n", 
-			engineStats.TotalRequests, engineStats.SuccessfulCrawls, engineStats.FailedCrawls)
+		crawlerStats = map[string]interface{}{
+			"total_requests":    engineStats.TotalRequests,
+			"successful_crawls": engineStats.SuccessfulCrawls,
+			"failed_crawls":     engineStats.FailedCrawls,
+		}
 	}
 	
-	if downloadStats := imageDownloader.GetStats(); downloadStats != nil {
-		fmt.Printf("Image downloads: %d (success: %d, failed: %d, skipped: %d)\n", 
-			downloadStats.TotalDownloads, downloadStats.SuccessfulDownloads, 
-			downloadStats.FailedDownloads, downloadStats.SkippedDownloads)
-		fmt.Printf("Data downloaded: %.2f MB\n", float64(downloadStats.BytesDownloaded)/(1024*1024))
+	if imgStats := imageDownloader.GetStats(); imgStats != nil {
+		downloadStats = map[string]interface{}{
+			"total_downloads":      imgStats.TotalDownloads,
+			"successful_downloads": imgStats.SuccessfulDownloads,
+			"failed_downloads":     imgStats.FailedDownloads,
+			"skipped_downloads":    imgStats.SkippedDownloads,
+			"bytes_downloaded":     int64(imgStats.BytesDownloaded),
+		}
 	}
 	
-	if organizerStats := fileOrganizer.GetStats(); organizerStats != nil {
-		fmt.Printf("File operations: %d (completed: %d, failed: %d)\n", 
-			organizerStats.TotalOperations, organizerStats.CompletedOperations, organizerStats.FailedOperations)
+	if orgStats := fileOrganizer.GetStats(); orgStats != nil {
+		organizerStats = map[string]interface{}{
+			"total_operations":     orgStats.TotalOperations,
+			"completed_operations": orgStats.CompletedOperations,
+			"failed_operations":    orgStats.FailedOperations,
+		}
 	}
 	
-	fmt.Printf("\n🎉 Processing completed successfully!\n")
+	// Display beautiful final summary
+	finalSummary := progressDisplay.FinalSummary(crawlerStats, downloadStats, organizerStats)
+	fmt.Println(finalSummary)
 	return nil
 }
 

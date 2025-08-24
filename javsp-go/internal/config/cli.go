@@ -95,7 +95,10 @@ func init() {
 			fmt.Println("Current Configuration:")
 			fmt.Printf("Scanner Input Directory: %s\n", config.Scanner.InputDirectory)
 			fmt.Printf("Network Proxy: %v\n", config.Network.ProxyServer)
+			fmt.Printf("Network Retry: %d\n", config.Network.Retry)
+			fmt.Printf("Network Timeout: %v\n", config.Network.Timeout)
 			fmt.Printf("Crawler Selection: %v\n", config.Crawler.Selection.Normal)
+			fmt.Printf("Crawler Sleep After Scraping: %v\n", config.Crawler.SleepAfterScraping)
 			fmt.Printf("Log Level: %s\n", config.Other.LogLevel)
 			return nil
 		},

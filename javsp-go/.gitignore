@@ -43,7 +43,7 @@ temp/
 # Build artifacts
 dist/
 build/
-javsp
+/javsp
 javsp.exe
 
 # Test artifacts

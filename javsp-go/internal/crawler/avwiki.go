@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"javsp-go/internal/config"
 	"javsp-go/internal/datatype"
 	"javsp-go/pkg/web"
 )
@@ -21,8 +22,13 @@ type AVWikiCrawler struct {
 
 // NewAVWikiCrawler creates a new AV-Wiki crawler
 func NewAVWikiCrawler(config *CrawlerConfig) (*AVWikiCrawler, error) {
-	if config == nil {
-		config = &CrawlerConfig{
+	return NewAVWikiCrawlerWithConfig(config, nil)
+}
+
+// NewAVWikiCrawlerWithConfig creates a new AV-Wiki crawler with full config
+func NewAVWikiCrawlerWithConfig(crawlerConfig *CrawlerConfig, fullConfig interface{}) (*AVWikiCrawler, error) {
+	if crawlerConfig == nil {
+		crawlerConfig = &CrawlerConfig{
 			BaseURL:    "https://av-wiki.net",
 			Timeout:    30 * time.Second,
 			MaxRetries: 3,
@@ -31,27 +37,36 @@ func NewAVWikiCrawler(config *CrawlerConfig) (*AVWikiCrawler, error) {
 		}
 	}
 
-	clientOpts := &web.ClientOptions{
-		Timeout:       config.Timeout,
-		EnableCookies: true,
-		SkipTLSVerify: true,
-		RateLimit:     config.RateLimit,
-	}
+	var client *web.Client
+	var err error
 
-	if config.ProxyURL != "" {
-		clientOpts.ProxyURL = config.ProxyURL
-	}
+	// Try to use NewClientWithConfig if full config is available
+	if cfg, ok := fullConfig.(*config.Config); ok && cfg != nil {
+		client, err = web.NewClientWithConfig(cfg)
+	} else {
+		// Fallback to manual client options
+		clientOpts := &web.ClientOptions{
+			Timeout:       crawlerConfig.Timeout,
+			EnableCookies: true,
+			SkipTLSVerify: true,
+			RateLimit:     crawlerConfig.RateLimit,
+		}
 
-	client, err := web.NewClient(clientOpts)
+		if crawlerConfig.ProxyURL != "" {
+			clientOpts.ProxyURL = crawlerConfig.ProxyURL
+		}
+
+		client, err = web.NewClient(clientOpts)
+	}
 	if err != nil {
 		return nil, fmt.Errorf("failed to create HTTP client: %w", err)
 	}
 
 	return &AVWikiCrawler{
 		name:    "avwiki",
-		baseURL: config.BaseURL,
+		baseURL: crawlerConfig.BaseURL,
 		client:  client,
-		config:  config,
+		config:  crawlerConfig,
 	}, nil
 }
 

@@ -21,15 +21,16 @@ import (
 
 // Client provides an advanced HTTP client with retry, proxy, and rate limiting
 type Client struct {
-	httpClient   *http.Client
-	config       *config.Config
-	userAgents   []string
-	uaIndex      int
-	uaMutex      sync.RWMutex
-	rateLimiter  *RateLimiter
-	cookieJar    http.CookieJar
-	lastRequest  time.Time
-	requestMutex sync.Mutex
+	httpClient       *http.Client
+	config           *config.Config
+	userAgents       []string
+	uaIndex          int
+	uaMutex          sync.RWMutex
+	rateLimiter      *RateLimiter
+	cookieJar        http.CookieJar
+	lastRequest      time.Time
+	requestMutex     sync.Mutex
+	progressCallback ProgressCallback
 }
 
 // ClientOptions contains options for creating a new client
@@ -44,11 +45,15 @@ type ClientOptions struct {
 	RateLimit      time.Duration
 }
 
+// ProgressCallback is called during operations with progress updates
+type ProgressCallback func(message string, elapsed time.Duration, remaining time.Duration)
+
 // RateLimiter controls request frequency
 type RateLimiter struct {
-	minInterval time.Duration
-	lastRequest time.Time
-	mutex       sync.Mutex
+	minInterval      time.Duration
+	lastRequest      time.Time
+	mutex           sync.Mutex
+	progressCallback ProgressCallback
 }
 
 // NewClient creates a new HTTP client with advanced features
@@ -194,12 +199,31 @@ func (c *Client) DoWithRetry(req *http.Request) (*http.Response, error) {
 	c.addHeaders(req)
 
 	var lastErr error
-	for attempt := 0; attempt <= maxRetries; attempt++ {
+	for attempt := 0; attempt < maxRetries; attempt++ {
 		if attempt > 0 {
 			// Exponential backoff with jitter
 			backoff := time.Duration(math.Pow(2, float64(attempt))) * time.Second
 			jitter := time.Duration(rand.Intn(1000)) * time.Millisecond
-			time.Sleep(backoff + jitter)
+			retryDelay := backoff + jitter
+			
+			// Show retry progress if callback is set
+			if c.progressCallback != nil {
+				start := time.Now()
+				message := fmt.Sprintf("Retrying (attempt %d/%d)", attempt+1, maxRetries+1)
+				for {
+					elapsed := time.Since(start)
+					remaining := retryDelay - elapsed
+					
+					if remaining <= 0 {
+						break
+					}
+					
+					c.progressCallback(message, elapsed, remaining)
+					time.Sleep(100 * time.Millisecond)
+				}
+			} else {
+				time.Sleep(retryDelay)
+			}
 		}
 
 		// Rate limiting
@@ -213,7 +237,7 @@ func (c *Client) DoWithRetry(req *http.Request) (*http.Response, error) {
 		}
 
 		// Check if we should retry based on status code
-		if shouldRetry(resp.StatusCode) && attempt < maxRetries {
+		if shouldRetry(resp.StatusCode) && attempt < maxRetries-1 {
 			resp.Body.Close()
 			lastErr = fmt.Errorf("HTTP %d: %s", resp.StatusCode, resp.Status)
 			continue
@@ -222,7 +246,7 @@ func (c *Client) DoWithRetry(req *http.Request) (*http.Response, error) {
 		return resp, nil
 	}
 
-	return nil, fmt.Errorf("request failed after %d attempts: %w", maxRetries+1, lastErr)
+	return nil, fmt.Errorf("request failed after %d attempts: %w", maxRetries, lastErr)
 }
 
 // addHeaders adds common headers to the request
@@ -297,7 +321,7 @@ func setupProxy(transport *http.Transport, proxyURL string) error {
 	return nil
 }
 
-// Wait implements rate limiting
+// Wait implements rate limiting with progress callback
 func (rl *RateLimiter) Wait() {
 	rl.mutex.Lock()
 	defer rl.mutex.Unlock()
@@ -308,7 +332,25 @@ func (rl *RateLimiter) Wait() {
 
 	elapsed := time.Since(rl.lastRequest)
 	if elapsed < rl.minInterval {
-		time.Sleep(rl.minInterval - elapsed)
+		waitTime := rl.minInterval - elapsed
+		
+		// Show progress if callback is set and wait time is significant
+		if rl.progressCallback != nil && waitTime > 100*time.Millisecond {
+			start := time.Now()
+			for {
+				waitElapsed := time.Since(start)
+				remaining := waitTime - waitElapsed
+				
+				if remaining <= 0 {
+					break
+				}
+				
+				rl.progressCallback("Rate limiting", waitElapsed, remaining)
+				time.Sleep(50 * time.Millisecond)
+			}
+		} else {
+			time.Sleep(waitTime)
+		}
 	}
 
 	rl.lastRequest = time.Now()
@@ -327,6 +369,14 @@ func (c *Client) GetCookies(u *url.URL) []*http.Cookie {
 		return c.cookieJar.Cookies(u)
 	}
 	return nil
+}
+
+// SetProgressCallback sets the progress callback for the client
+func (c *Client) SetProgressCallback(callback ProgressCallback) {
+	c.progressCallback = callback
+	if c.rateLimiter != nil {
+		c.rateLimiter.progressCallback = callback
+	}
 }
 
 // Close cleans up client resources
