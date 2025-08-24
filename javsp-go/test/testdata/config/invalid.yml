@@ -1,0 +1,22 @@
+scanner:
+  input_directory: /test/input
+  filename_extensions: [] # Invalid: empty list
+  minimum_size: 100MiB
+
+network:
+  retry: -1 # Invalid: negative retry count
+  timeout: 0s # Invalid: zero timeout
+
+crawler:
+  selection:
+    normal: [] # Invalid: empty crawler selection
+  required_keys: [] # Invalid: empty required keys
+
+summarizer:
+  path:
+    length_maximum: 0 # Invalid: zero length maximum
+    max_actress_count: 0 # Invalid: zero max actress count
+  censor_options_representation: ['one', 'two'] # Invalid: should have 3 elements
+
+other:
+  log_level: INFO

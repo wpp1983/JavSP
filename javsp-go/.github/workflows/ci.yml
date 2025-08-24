@@ -1,0 +1,168 @@
+name: CI/CD Pipeline
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main ]
+
+env:
+  GO_VERSION: '1.21'
+
+jobs:
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v4
+        with:
+          go-version: ${{ env.GO_VERSION }}
+
+      - name: Cache Go modules
+        uses: actions/cache@v3
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
+          restore-keys: |
+            ${{ runner.os }}-go-
+
+      - name: Download dependencies
+        run: go mod download
+
+      - name: Run tests
+        run: |
+          go test -v -race -coverprofile=coverage.out ./...
+          go tool cover -html=coverage.out -o coverage.html
+
+      - name: Upload coverage reports to Codecov
+        uses: codecov/codecov-action@v3
+        with:
+          file: ./coverage.out
+          flags: unittests
+          name: codecov-umbrella
+
+      - name: Archive test results
+        uses: actions/upload-artifact@v3
+        if: always()
+        with:
+          name: test-results
+          path: |
+            coverage.out
+            coverage.html
+
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v4
+        with:
+          go-version: ${{ env.GO_VERSION }}
+
+      - name: golangci-lint
+        uses: golangci/golangci-lint-action@v3
+        with:
+          version: latest
+          args: --timeout=5m
+
+  security:
+    name: Security Scan
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v4
+        with:
+          go-version: ${{ env.GO_VERSION }}
+
+      - name: Run Gosec Security Scanner
+        uses: securecodewarrior/github-action-gosec@master
+        with:
+          args: '-fmt sarif -out gosec.sarif ./...'
+
+      - name: Upload SARIF file
+        uses: github/codeql-action/upload-sarif@v2
+        with:
+          sarif_file: gosec.sarif
+
+  build:
+    name: Build
+    needs: [test, lint]
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        arch: [amd64, arm64]
+        exclude:
+          - os: windows-latest
+            arch: arm64
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v4
+        with:
+          go-version: ${{ env.GO_VERSION }}
+
+      - name: Build binary
+        env:
+          GOOS: ${{ runner.os == 'Windows' && 'windows' || runner.os == 'macOS' && 'darwin' || 'linux' }}
+          GOARCH: ${{ matrix.arch }}
+          CGO_ENABLED: 0
+        run: |
+          VERSION=$(git describe --tags --always --dirty)
+          COMMIT=$(git rev-parse --short HEAD)
+          DATE=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          
+          go build -ldflags "-X main.version=${VERSION} -X main.commit=${COMMIT} -X main.date=${DATE} -w -s" \
+            -o javsp${{ runner.os == 'Windows' && '.exe' || '' }} ./cmd/javsp
+
+      - name: Run smoke test
+        if: matrix.arch == 'amd64'
+        run: ./javsp${{ runner.os == 'Windows' && '.exe' || '' }} --version
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v3
+        with:
+          name: javsp-${{ runner.os }}-${{ matrix.arch }}
+          path: javsp${{ runner.os == 'Windows' && '.exe' || '' }}
+
+  release:
+    name: Release
+    needs: build
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/')
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v3
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: |
+            javsp-Linux-amd64/javsp
+            javsp-Linux-arm64/javsp
+            javsp-Windows-amd64/javsp.exe
+            javsp-macOS-amd64/javsp
+            javsp-macOS-arm64/javsp
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -1,0 +1,75 @@
+scanner:
+  ignored_id_pattern:
+    - '(144|240|360|480|720|1080)[Pp]'
+    - '[24][Kk]'
+  input_directory: /test/input
+  filename_extensions: [.mp4, .mkv, .avi]
+  ignored_folder_name_pattern: ['^\.', '^#recycle$']
+  minimum_size: 100MiB
+  skip_nfo_dir: false
+  manual: false
+
+network:
+  proxy_server: null
+  retry: 3
+  timeout: 15s
+
+crawler:
+  selection:
+    normal: [javbus2, avwiki]
+    fc2: [javbus2, avwiki]
+    cid: [javbus2, avwiki]
+  required_keys: [cover, title]
+  hardworking: true
+  respect_site_avid: true
+  fc2fan_local_path: null
+  sleep_after_scraping: 1s
+  use_javdb_cover: fallback
+  normalize_actress_name: true
+
+summarizer:
+  move_files: true
+  path:
+    output_folder_pattern: '#整理完成/{actress}/[{num}] {title}'
+    basename_pattern: '{num}'
+    length_maximum: 250
+    length_by_byte: true
+    max_actress_count: 10
+    hard_link: false
+    cleanup_empty_folders: true
+  title:
+    remove_trailing_actor_name: true
+  default:
+    title: '#未知标题'
+    actress: '#未知女优'
+    series: '#未知系列'
+    director: '#未知导演'
+    producer: '#未知制作商'
+    publisher: '#未知发行商'
+  nfo:
+    basename_pattern: movie
+    title_pattern: '{num} {title}'
+    custom_genres_fields: ['{genre}', '{censor}']
+    custom_tags_fields: ['{genre}', '{censor}']
+  censor_options_representation: ['无码', '有码', '打码情况未知']
+  cover:
+    basename_pattern: poster
+    highres: true
+    add_label: false
+    crop:
+      on_id_pattern:
+        - '^\d{6}[-_]\d{3}$'
+        - '^ARA'
+        - '^SIRO'
+      engine: null
+  fanart:
+    basename_pattern: fanart
+  extra_fanarts:
+    enabled: false
+    scrap_interval: 1500ms
+
+other:
+  interactive: true
+  check_update: false
+  auto_update: false
+  log_level: INFO

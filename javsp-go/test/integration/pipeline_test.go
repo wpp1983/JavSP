@@ -1,0 +1,425 @@
+//go:build integration
+
+package integration
+
+import (
+	"context"
+	"path/filepath"
+	"testing"
+
+	"javsp-go/internal/avid"
+	"javsp-go/internal/config"
+	"javsp-go/internal/scanner"
+	"javsp-go/test/testutils"
+)
+
+func TestFullPipeline(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipping integration test in short mode")
+	}
+
+	// Create temporary directory for test
+	tmpDir := testutils.CreateTempDir(t)
+	
+	// Create test video files
+	testFiles := []string{
+		"STARS-123.mp4",
+		"SSIS-001.mkv",
+		"IPX-177.avi",
+		"FC2-PPV-1234567.mp4",
+		"[JavBus] MIDE-456 女优名.mp4",
+		"invalid_file.mp4",
+		"纯中文文件.mp4",
+	}
+	
+	testPaths := testutils.CreateTestFiles(t, tmpDir, testFiles)
+	
+	t.Run("TestAVIDRecognition", func(t *testing.T) {
+		recognizer := avid.NewRecognizer()
+		
+		expectedResults := map[string]string{
+			"STARS-123.mp4":                "STARS-123",
+			"SSIS-001.mkv":                 "SSIS-001",
+			"IPX-177.avi":                  "IPX-177",
+			"FC2-PPV-1234567.mp4":          "FC2-1234567",
+			"[JavBus] MIDE-456 女优名.mp4": "MIDE-456",
+			"invalid_file.mp4":             "",
+			"纯中文文件.mp4":                   "",
+		}
+		
+		for filename, expectedAVID := range expectedResults {
+			result := recognizer.Recognize(filename)
+			if result != expectedAVID {
+				t.Errorf("Recognize(%s) = %s, expected %s", filename, result, expectedAVID)
+			}
+		}
+	})
+	
+	t.Run("TestFileScanner", func(t *testing.T) {
+		// Create a temporary config
+		cfg := config.GetDefaultConfig()
+		cfg.Scanner.InputDirectory = tmpDir
+		cfg.Scanner.FilenameExtensions = []string{".mp4", ".mkv", ".avi"}
+		cfg.Scanner.MinimumSize = "1B" // Very small for testing
+		
+		// Create and configure scanner
+		fileScanner := scanner.NewScanner(cfg)
+		
+		// Scan files
+		files, err := fileScanner.ScanDirectory(tmpDir)
+		if err != nil {
+			t.Fatalf("Failed to scan directory: %v", err)
+		}
+		
+		// Should find all valid video files
+		expectedCount := len(testFiles)
+		if len(files) != expectedCount {
+			t.Errorf("Expected %d files, got %d", expectedCount, len(files))
+		}
+		
+		// Check that files have correct extensions
+		validExtensions := map[string]bool{".mp4": true, ".mkv": true, ".avi": true}
+		for _, file := range files {
+			ext := filepath.Ext(file)
+			if !validExtensions[ext] {
+				t.Errorf("Unexpected file extension: %s", ext)
+			}
+		}
+	})
+	
+	t.Run("TestPipelineWithRecognizer", func(t *testing.T) {
+		cfg := config.GetDefaultConfig()
+		cfg.Scanner.InputDirectory = tmpDir
+		cfg.Scanner.FilenameExtensions = []string{".mp4", ".mkv", ".avi"}
+		cfg.Scanner.MinimumSize = "1B"
+		
+		fileScanner := scanner.NewScanner(cfg)
+		recognizer := avid.NewRecognizer()
+		
+		// Scan files
+		files, err := fileScanner.ScanDirectory(tmpDir)
+		if err != nil {
+			t.Fatalf("Failed to scan directory: %v", err)
+		}
+		
+		// Process each file through the recognition pipeline
+		recognizedCount := 0
+		unrecognizedCount := 0
+		
+		for _, filePath := range files {
+			filename := filepath.Base(filePath)
+			avid := recognizer.Recognize(filename)
+			
+			if avid != "" {
+				recognizedCount++
+				t.Logf("Recognized: %s -> %s", filename, avid)
+			} else {
+				unrecognizedCount++
+				t.Logf("Unrecognized: %s", filename)
+			}
+		}
+		
+		// Should recognize most files (5 valid, 2 invalid)
+		if recognizedCount < 4 {
+			t.Errorf("Expected at least 4 recognized files, got %d", recognizedCount)
+		}
+		
+		if unrecognizedCount != 2 {
+			t.Errorf("Expected 2 unrecognized files, got %d", unrecognizedCount)
+		}
+	})
+	
+	t.Run("TestFilteringPipeline", func(t *testing.T) {
+		cfg := config.GetDefaultConfig()
+		cfg.Scanner.InputDirectory = tmpDir
+		cfg.Scanner.FilenameExtensions = []string{".mp4", ".mkv", ".avi"}
+		cfg.Scanner.MinimumSize = "1B"
+		
+		fileScanner := scanner.NewScanner(cfg)
+		recognizer := avid.NewRecognizerWithConfig(cfg)
+		
+		// Scan and filter files
+		files, err := fileScanner.ScanDirectory(tmpDir)
+		if err != nil {
+			t.Fatalf("Failed to scan directory: %v", err)
+		}
+		
+		filteredFiles := make([]string, 0)
+		for _, filePath := range files {
+			filename := filepath.Base(filePath)
+			
+			// Apply filters
+			if !fileScanner.PassesFilters(filePath) {
+				continue
+			}
+			
+			// Check if recognizable
+			avid := recognizer.Recognize(filename)
+			if avid == "" {
+				continue
+			}
+			
+			filteredFiles = append(filteredFiles, filePath)
+		}
+		
+		// Should have fewer files after filtering
+		if len(filteredFiles) >= len(files) {
+			t.Error("Filtering should reduce the number of files")
+		}
+		
+		if len(filteredFiles) == 0 {
+			t.Error("Should have some files after filtering")
+		}
+		
+		t.Logf("Original files: %d, Filtered files: %d", len(files), len(filteredFiles))
+	})
+}
+
+func TestConfigurationPipeline(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipping integration test in short mode")
+	}
+
+	tmpDir := testutils.CreateTempDir(t)
+	
+	t.Run("TestConfigLoading", func(t *testing.T) {
+		// Create test config file
+		configContent := `
+scanner:
+  input_directory: "` + tmpDir + `"
+  minimum_size: "100MiB"
+  filename_extensions: [".mp4", ".mkv", ".avi"]
+
+network:
+  retry: 3
+  timeout: "30s"
+
+crawler:
+  hardworking: true
+  selection:
+    normal: ["javbus", "avwiki"]
+
+other:
+  log_level: "DEBUG"
+  interactive: false
+`
+		
+		configPath := filepath.Join(tmpDir, "test_config.yml")
+		testutils.WriteTestFile(t, configPath, configContent)
+		
+		// Load config
+		cfg, err := config.LoadFromFile(configPath)
+		if err != nil {
+			t.Fatalf("Failed to load config: %v", err)
+		}
+		
+		// Verify config values
+		if cfg.Scanner.InputDirectory != tmpDir {
+			t.Errorf("Expected input directory %s, got %s", tmpDir, cfg.Scanner.InputDirectory)
+		}
+		
+		if cfg.Scanner.MinimumSize != "100MiB" {
+			t.Errorf("Expected minimum size '100MiB', got '%s'", cfg.Scanner.MinimumSize)
+		}
+		
+		if len(cfg.Scanner.FilenameExtensions) != 3 {
+			t.Errorf("Expected 3 extensions, got %d", len(cfg.Scanner.FilenameExtensions))
+		}
+		
+		if cfg.Network.Retry != 3 {
+			t.Errorf("Expected retry 3, got %d", cfg.Network.Retry)
+		}
+		
+		if cfg.Other.LogLevel != "DEBUG" {
+			t.Errorf("Expected log level 'DEBUG', got '%s'", cfg.Other.LogLevel)
+		}
+	})
+	
+	t.Run("TestInvalidConfig", func(t *testing.T) {
+		invalidConfigContent := `
+invalid_yaml: [
+  unclosed_array
+`
+		
+		configPath := filepath.Join(tmpDir, "invalid_config.yml")
+		testutils.WriteTestFile(t, configPath, invalidConfigContent)
+		
+		_, err := config.LoadFromFile(configPath)
+		if err == nil {
+			t.Error("Expected error loading invalid config")
+		}
+	})
+	
+	t.Run("TestConfigValidation", func(t *testing.T) {
+		cfg := config.GetDefaultConfig()
+		
+		// Test valid config
+		if err := config.ValidateConfig(cfg); err != nil {
+			t.Errorf("Default config should be valid: %v", err)
+		}
+		
+		// Test invalid config - negative retry
+		cfg.Network.Retry = -1
+		if err := config.ValidateConfig(cfg); err == nil {
+			t.Error("Expected validation error for negative retry")
+		}
+		
+		// Reset and test zero timeout
+		cfg = config.GetDefaultConfig()
+		cfg.Network.Timeout = 0
+		if err := config.ValidateConfig(cfg); err == nil {
+			t.Error("Expected validation error for zero timeout")
+		}
+	})
+}
+
+func TestEndToEndPipeline(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipping integration test in short mode")
+	}
+
+	tmpDir := testutils.CreateTempDir(t)
+	
+	// Create comprehensive test environment
+	testFiles := []string{
+		"STARS-123.mp4",
+		"SSIS-001 1080p.mkv",
+		"[JavBus] IPX-177 女优名字.avi",
+		"FC2-PPV-1234567.mp4",
+		"300MIUM-001.mp4",
+		"GANA-2156.mp4",
+		"invalid.mp4",
+		"readme.txt", // Should be filtered out
+	}
+	
+	testutils.CreateTestFiles(t, tmpDir, testFiles)
+	
+	t.Run("TestCompleteWorkflow", func(t *testing.T) {
+		// Step 1: Configuration
+		cfg := config.GetDefaultConfig()
+		cfg.Scanner.InputDirectory = tmpDir
+		cfg.Scanner.FilenameExtensions = []string{".mp4", ".mkv", ".avi"}
+		cfg.Scanner.MinimumSize = "1B"
+		
+		// Step 2: File Scanning
+		fileScanner := scanner.NewScanner(cfg)
+		files, err := fileScanner.ScanDirectory(tmpDir)
+		if err != nil {
+			t.Fatalf("Failed to scan directory: %v", err)
+		}
+		
+		t.Logf("Found %d files", len(files))
+		
+		// Step 3: AVID Recognition
+		recognizer := avid.NewRecognizerWithConfig(cfg)
+		recognizedMovies := make(map[string]string)
+		
+		for _, filePath := range files {
+			filename := filepath.Base(filePath)
+			avid := recognizer.Recognize(filename)
+			if avid != "" {
+				recognizedMovies[filePath] = avid
+				t.Logf("Recognized: %s -> %s", filename, avid)
+			}
+		}
+		
+		// Step 4: Verification
+		expectedMovies := map[string]bool{
+			"STARS-123":     false,
+			"SSIS-001":      false,
+			"IPX-177":       false,
+			"FC2-1234567":   false,
+			"300MIUM-001":   false,
+			"GANA-2156":     false,
+		}
+		
+		for _, avid := range recognizedMovies {
+			if _, expected := expectedMovies[avid]; expected {
+				expectedMovies[avid] = true
+			}
+		}
+		
+		// Check that all expected movies were found
+		for movieID, found := range expectedMovies {
+			if !found {
+				t.Errorf("Expected movie %s not found", movieID)
+			}
+		}
+		
+		// Should have recognized 6 movies
+		if len(recognizedMovies) < 6 {
+			t.Errorf("Expected at least 6 recognized movies, got %d", len(recognizedMovies))
+		}
+	})
+	
+	t.Run("TestCIDGeneration", func(t *testing.T) {
+		testCases := map[string]string{
+			"STARS-123": "stars00123",
+			"SSIS-001":  "ssis00001",
+			"IPX-177":   "ipx00177",
+			"MIDE-456":  "mide00456",
+		}
+		
+		for dvdid, expectedCID := range testCases {
+			cid := avid.GetCID(dvdid)
+			if cid != expectedCID {
+				t.Errorf("GetCID(%s) = %s, expected %s", dvdid, cid, expectedCID)
+			}
+		}
+	})
+	
+	t.Run("TestAVTypeGuessing", func(t *testing.T) {
+		testCases := map[string]string{
+			"STARS-123":     "normal",
+			"FC2-1234567":   "fc2",
+			"GANA-2156":     "amateur",
+			"300MIUM-001":   "amateur",
+			"GETCHU-123456": "getchu",
+		}
+		
+		for avid, expectedType := range testCases {
+			avType := avid.GuessAVType(avid)
+			if avType != expectedType {
+				t.Errorf("GuessAVType(%s) = %s, expected %s", avid, avType, expectedType)
+			}
+		}
+	})
+}
+
+func BenchmarkFullPipeline(b *testing.B) {
+	tmpDir := testutils.CreateTempDir(&testing.T{})
+	
+	// Create many test files
+	var testFiles []string
+	for i := 0; i < 100; i++ {
+		testFiles = append(testFiles, fmt.Sprintf("STARS-%03d.mp4", i+1))
+		testFiles = append(testFiles, fmt.Sprintf("SSIS-%03d.mkv", i+1))
+	}
+	
+	testutils.CreateTestFiles(&testing.T{}, tmpDir, testFiles)
+	
+	cfg := config.GetDefaultConfig()
+	cfg.Scanner.InputDirectory = tmpDir
+	cfg.Scanner.FilenameExtensions = []string{".mp4", ".mkv", ".avi"}
+	cfg.Scanner.MinimumSize = "1B"
+	
+	fileScanner := scanner.NewScanner(cfg)
+	recognizer := avid.NewRecognizerWithConfig(cfg)
+	
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		files, _ := fileScanner.ScanDirectory(tmpDir)
+		
+		recognized := 0
+		for _, filePath := range files {
+			filename := filepath.Base(filePath)
+			if avid := recognizer.Recognize(filename); avid != "" {
+				recognized++
+			}
+		}
+		
+		if recognized == 0 {
+			b.Error("No files recognized in benchmark")
+		}
+	}
+}
