@@ -185,6 +185,11 @@ func validateConfig(config *Config) error {
 	return nil
 }
 
+// ValidateConfig validates the configuration (exported version)
+func ValidateConfig(config *Config) error {
+	return validateConfig(config)
+}
+
 // GetConfig returns the global configuration instance
 func GetConfig() *Config {
 	if globalConfig == nil {

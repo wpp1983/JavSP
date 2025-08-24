@@ -40,7 +40,7 @@ scanner:
         - \w+2048\.com
         - Carib(beancom)?
         - '[^a-z\d](f?hd|lt)[^a-z\d]'
-    input_directory: ""
+    input_directory: "test_javsp/input"
     filename_extensions:
         - .3gp
         - .avi
@@ -66,13 +66,13 @@ scanner:
         - ^#recycle$
         - ^#整理完成$
         - ^#不要扫描$
-    minimum_size: 232MiB
+    minimum_size: 1KiB
     skip_nfo_dir: false
     manual: false
 summarizer:
     move_files: true
     path:
-        output_folder_pattern: '#整理完成/{actress}/[{num}] {title}'
+        output_folder_pattern: 'test_javsp/output/{actress}/[{num}] {title}'
         basename_pattern: '{num}'
         length_maximum: 250
         length_by_byte: true

@@ -4,10 +4,12 @@ package integration
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
 	"javsp-go/internal/crawler"
+	"javsp-go/internal/datatype"
 	"javsp-go/test/testutils"
 )
 
@@ -218,7 +220,7 @@ func TestCrawlerEngine(t *testing.T) {
 	
 	t.Run("TestEngineSearch", func(t *testing.T) {
 		// Set up search results
-		searchResults := []*testutils.MovieInfo{
+		searchResults := []*datatype.MovieInfo{
 			generator.GenerateMovieInfo("STARS-001"),
 			generator.GenerateMovieInfo("STARS-002"),
 		}

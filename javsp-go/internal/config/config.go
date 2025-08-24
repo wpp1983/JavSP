@@ -129,13 +129,23 @@ type ExtraFanartsConfig struct {
 	ScrapInterval time.Duration   `mapstructure:"scrap_interval" yaml:"scrap_interval" json:"scrap_interval"`
 }
 
+// ProgressConfig represents the progress display configuration
+type ProgressConfig struct {
+	Enabled           bool          `mapstructure:"enabled" yaml:"enabled" json:"enabled"`
+	ShowDetailedTiming bool          `mapstructure:"show_detailed_timing" yaml:"show_detailed_timing" json:"show_detailed_timing"`
+	ShowRemainingTime bool          `mapstructure:"show_remaining_time" yaml:"show_remaining_time" json:"show_remaining_time"`
+	UpdateInterval    time.Duration `mapstructure:"update_interval" yaml:"update_interval" json:"update_interval"`
+	SpinnerEnabled    bool          `mapstructure:"spinner_enabled" yaml:"spinner_enabled" json:"spinner_enabled"`
+}
+
 // OtherConfig represents the other configuration options
 type OtherConfig struct {
-	Interactive  bool     `mapstructure:"interactive" yaml:"interactive" json:"interactive"`
-	CheckUpdate  bool     `mapstructure:"check_update" yaml:"check_update" json:"check_update"`
-	AutoUpdate   bool     `mapstructure:"auto_update" yaml:"auto_update" json:"auto_update"`
-	LogLevel     string `mapstructure:"log_level" yaml:"log_level" json:"log_level"`
-	DryRun       bool     `mapstructure:"dry_run" yaml:"dry_run" json:"dry_run"`
+	Interactive  bool           `mapstructure:"interactive" yaml:"interactive" json:"interactive"`
+	CheckUpdate  bool           `mapstructure:"check_update" yaml:"check_update" json:"check_update"`
+	AutoUpdate   bool           `mapstructure:"auto_update" yaml:"auto_update" json:"auto_update"`
+	LogLevel     string         `mapstructure:"log_level" yaml:"log_level" json:"log_level"`
+	DryRun       bool           `mapstructure:"dry_run" yaml:"dry_run" json:"dry_run"`
+	Progress     ProgressConfig `mapstructure:"progress" yaml:"progress" json:"progress"`
 }
 
 // GetDefaultConfig returns the default configuration
@@ -244,6 +254,13 @@ func GetDefaultConfig() *Config {
 			CheckUpdate: false,
 			AutoUpdate:  false,
 			LogLevel:    "INFO",
+			Progress: ProgressConfig{
+				Enabled:           true,
+				ShowDetailedTiming: true,
+				ShowRemainingTime: true,
+				UpdateInterval:    500 * time.Millisecond,
+				SpinnerEnabled:    true,
+			},
 		},
 	}
 }

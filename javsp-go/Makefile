@@ -17,7 +17,7 @@ DATE := $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
 LDFLAGS=-ldflags "-X main.version=$(VERSION) -X main.commit=$(COMMIT) -X main.date=$(DATE) -w -s"
 
 # Build targets
-.PHONY: all build clean test test-unit test-integration test-benchmark coverage lint format help install deps
+.PHONY: all build clean test test-unit test-integration test-real test-real-quick test-network test-benchmark test-all test-ci-safe coverage lint format help install deps
 
 all: clean deps test build
 
@@ -58,13 +58,33 @@ test-integration:
 	@echo "Running integration tests..."
 	$(GOTEST) -v -race -timeout=60s -tags=integration ./test/integration/...
 
+# Run real site tests (requires internet connection)
+test-real:
+	@echo "Running real site integration tests..."
+	@echo "Warning: This will make real HTTP requests to external websites"
+	$(GOTEST) -v -race -timeout=300s -tags="integration && real_sites" ./test/integration/...
+
+# Run quick real site tests (faster version)
+test-real-quick:
+	@echo "Running quick real site tests..."
+	@echo "Warning: This will make real HTTP requests to external websites"
+	$(GOTEST) -v -race -timeout=120s -tags="integration && real_sites" -run="TestQuickRealSites" ./test/integration/...
+
+# Run network resilience tests
+test-network:
+	@echo "Running network resilience tests..."
+	$(GOTEST) -v -race -timeout=180s -tags="integration && real_sites" -run="TestNetwork.*|.*Resilience.*" ./test/integration/...
+
 # Run benchmark tests only
 test-benchmark:
 	@echo "Running benchmark tests..."
 	$(GOTEST) -v -run=^$$ -bench=. -benchmem -timeout=300s -tags=benchmark ./test/benchmark/...
 
-# Run all tests including benchmarks
-test-all: test-unit test-integration test-benchmark
+# Run all tests including benchmarks and real sites
+test-all: test-unit test-integration test-real test-benchmark
+
+# Run all tests excluding real site tests (for CI)
+test-ci-safe: test-unit test-integration test-benchmark
 
 # Run tests with coverage (unit tests only by default)
 coverage:
@@ -149,8 +169,12 @@ help:
 	@echo "  test         - Run unit + integration tests"
 	@echo "  test-unit    - Run unit tests only"
 	@echo "  test-integration - Run integration tests only"
+	@echo "  test-real    - Run real site integration tests (requires internet)"
+	@echo "  test-real-quick - Run quick real site tests (faster version)"
+	@echo "  test-network - Run network resilience tests"
 	@echo "  test-benchmark   - Run benchmark tests only"
-	@echo "  test-all     - Run all tests including benchmarks"
+	@echo "  test-all     - Run all tests including real sites and benchmarks"
+	@echo "  test-ci-safe - Run all tests except real site tests (for CI)"
 	@echo "  test-quick   - Run quick unit tests (no race detection)"
 	@echo "  test-ci      - Run CI test suite"
 	@echo ""
