@@ -52,7 +52,7 @@ func NewScanner(cfg *config.Config) (*Scanner, error) {
 
 	return &Scanner{
 		config:     cfg,
-		recognizer: avid.NewRecognizerWithConfig(cfg),
+		recognizer: avid.NewRecognizerWithIgnoredPatterns(cfg.Scanner.IgnoredIDPattern),
 		filters:    filter,
 	}, nil
 }

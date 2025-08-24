@@ -135,6 +135,7 @@ type OtherConfig struct {
 	CheckUpdate  bool     `mapstructure:"check_update" yaml:"check_update" json:"check_update"`
 	AutoUpdate   bool     `mapstructure:"auto_update" yaml:"auto_update" json:"auto_update"`
 	LogLevel     string `mapstructure:"log_level" yaml:"log_level" json:"log_level"`
+	DryRun       bool     `mapstructure:"dry_run" yaml:"dry_run" json:"dry_run"`
 }
 
 // GetDefaultConfig returns the default configuration

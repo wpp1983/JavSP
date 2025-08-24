@@ -16,6 +16,12 @@ var (
 	dryRun      bool
 )
 
+// ProcessingFunc is the type for the main processing function
+type ProcessingFunc func(*Config) error
+
+// Global processing function that will be set by main
+var RunJavSPProcessing ProcessingFunc
+
 // RootCmd represents the base command when called without any subcommands
 var RootCmd = &cobra.Command{
 	Use:   "javsp",
@@ -171,7 +177,7 @@ func runJavSP(cmd *cobra.Command, args []string) error {
 		fmt.Printf("Input directory: %s\n", config.Scanner.InputDirectory)
 		fmt.Printf("Crawler sites: %v\n", config.Crawler.Selection.Normal)
 		fmt.Printf("Move files: %v\n", config.Summarizer.MoveFiles)
-		return nil
+		fmt.Println()
 	}
 
 	// Here we would start the main processing logic
@@ -188,8 +194,8 @@ func runJavSP(cmd *cobra.Command, args []string) error {
 	
 	fmt.Printf("Scanning directory: %s\n", config.Scanner.InputDirectory)
 	
-	// TODO: Implement main processing logic
-	return nil
+	// Call RunJavSPProcessing function which will be implemented in main.go
+	return RunJavSPProcessing(config)
 }
 
 // LoadWithOverrides loads configuration with command-line overrides
@@ -219,6 +225,9 @@ func LoadWithOverrides(cmd *cobra.Command) (*Config, error) {
 	if flag := cmd.Flags().Lookup("interactive"); flag != nil && flag.Changed {
 		config.Other.Interactive = interactive
 	}
+
+	// Set dry-run flag in config
+	config.Other.DryRun = dryRun
 
 	// Re-validate after overrides
 	if err := validateConfig(config); err != nil {

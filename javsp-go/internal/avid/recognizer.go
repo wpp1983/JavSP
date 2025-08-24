@@ -4,8 +4,6 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
-
-	"javsp-go/internal/config"
 )
 
 var (
@@ -29,14 +27,14 @@ func NewRecognizer() *Recognizer {
 	return r
 }
 
-// NewRecognizerWithConfig creates a new recognizer with custom config
-func NewRecognizerWithConfig(cfg *config.Config) *Recognizer {
+// NewRecognizerWithIgnoredPatterns creates a new recognizer with custom ignored patterns
+func NewRecognizerWithIgnoredPatterns(ignoredPatterns []string) *Recognizer {
 	r := &Recognizer{
 		patterns: make(map[string]*regexp.Regexp),
 	}
 	
-	// Compile ignored patterns from config
-	for _, pattern := range cfg.Scanner.IgnoredIDPattern {
+	// Compile ignored patterns
+	for _, pattern := range ignoredPatterns {
 		if compiled, err := regexp.Compile(pattern); err == nil {
 			r.ignoredPatterns = append(r.ignoredPatterns, compiled)
 		}
